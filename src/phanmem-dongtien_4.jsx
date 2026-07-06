@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import * as XLSX from "xlsx";
 import { saveInvoiceUpload, loadLatestInvoiceUpload } from "./lib/db";
+import { supabase } from "./lib/supabase";
 import {
   AlertTriangle, Wallet, Phone, FileSpreadsheet, CheckCircle2, Sparkles,
   ShieldCheck, ShieldAlert, TrendingDown, Tag, Activity, Zap, Wand2,
@@ -3185,6 +3186,15 @@ function AppShell() {
   const { t, lang, setLang } = useT();
   const [page, setPage] = useState("cashflow");
   const [collapsed, setCollapsed] = useState(false);
+  const [me, setMe] = useState(null);
+  const [userMenu, setUserMenu] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getUser().then(({ data }) => setMe(data.user)).catch(() => {});
+  }, []);
+  const displayName = (me && (me.user_metadata?.display_name || (me.email || "").split("@")[0])) || "Người dùng";
+  const initials = displayName.trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(-2).join("").toUpperCase() || "ND";
 
   useEffect(() => {
     const l = document.createElement("link"); l.rel = "stylesheet";
@@ -3228,12 +3238,23 @@ function AppShell() {
         </div>
 
         {/* logged-in user */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "11px 0" : "11px 14px", justifyContent: collapsed ? "center" : "flex-start", borderBottom: `1px solid ${C.line}` }}>
-          <div title="Kế toán trưởng" style={{ width: 32, height: 32, borderRadius: 9, flex: "0 0 auto", display: "grid", placeItems: "center", background: `linear-gradient(135deg, ${C.cyan}, ${C.violet})`, color: "#06121f", fontWeight: 800, fontSize: 13, fontFamily: DISP }}>NA</div>
-          {!collapsed && <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: C.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Nguyễn Văn An</div>
-            <div style={{ fontSize: 10, color: C.green, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: 9, background: C.green }} />{t("user.role")}</div>
-          </div>}
+        <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "11px 0" : "11px 14px", justifyContent: collapsed ? "center" : "flex-start", borderBottom: `1px solid ${C.line}` }}>
+          <div title={displayName} onClick={() => collapsed && setUserMenu((v) => !v)} style={{ width: 32, height: 32, borderRadius: 9, flex: "0 0 auto", display: "grid", placeItems: "center", background: `linear-gradient(135deg, ${C.cyan}, ${C.violet})`, color: "#06121f", fontWeight: 800, fontSize: 13, fontFamily: DISP, cursor: collapsed ? "pointer" : "default" }}>{initials}</div>
+          {!collapsed && <>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: C.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
+            </div>
+            <button onClick={() => setUserMenu((v) => !v)} title="Tùy chọn" style={{ flex: "0 0 auto", width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", background: userMenu ? "rgba(255,255,255,.08)" : "transparent", border: "none", color: C.sub, cursor: "pointer", fontSize: 16, fontWeight: 800, letterSpacing: 1 }}>⋯</button>
+          </>}
+          {userMenu && (
+            <div style={{ position: "absolute", top: "calc(100% - 4px)", left: collapsed ? 8 : 14, right: collapsed ? "auto" : 14, zIndex: 999, background: "#111E33", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, boxShadow: "0 10px 30px rgba(0,0,0,.5)", minWidth: 180 }}>
+              {me && <div style={{ fontSize: 11, color: C.sub, padding: "6px 10px 8px", borderBottom: `1px solid ${C.line}`, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me.email}</div>}
+              <button onClick={() => supabase && supabase.auth.signOut()} style={{ width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: "#F26D6D", background: "transparent", fontFamily: "inherit" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(242,109,109,.12)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+                Đăng xuất
+              </button>
+            </div>
+          )}
         </div>
 
         <nav style={{ flex: 1, padding: "10px 10px", display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>

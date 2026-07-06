@@ -13,6 +13,7 @@ export default function AuthGate({ children }) {
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+  const [name, setName] = useState("");
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +47,7 @@ export default function AuthGate({ children }) {
       setErr(""); setNotice(""); setBusy(true);
       try {
         if (mode === "signup") {
-          const { data, error } = await supabase.auth.signUp({ email, password: pw });
+          const { data, error } = await supabase.auth.signUp({ email, password: pw, options: { data: { display_name: name.trim() } } });
           if (error) throw error;
           if (!data.session) setNotice("Đã tạo tài khoản — kiểm tra email để xác nhận rồi đăng nhập.");
         } else {
@@ -64,6 +65,10 @@ export default function AuthGate({ children }) {
           <div style={{ fontSize: 13, color: C.sub, marginTop: 5, marginBottom: 22 }}>
             {mode === "signin" ? "Đăng nhập để xem dữ liệu của bạn" : "Tạo tài khoản mới"}
           </div>
+          {mode === "signup" && <>
+            <label style={{ fontSize: 12.5, color: C.sub, display: "block", marginBottom: 6 }}>Tên đăng nhập</label>
+            <input style={{ ...inputStyle, marginBottom: 14 }} type="text" required minLength={2} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nguyễn Văn A" />
+          </>}
           <label style={{ fontSize: 12.5, color: C.sub, display: "block", marginBottom: 6 }}>Email</label>
           <input style={inputStyle} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@congty.vn" />
           <label style={{ fontSize: 12.5, color: C.sub, display: "block", margin: "14px 0 6px" }}>Mật khẩu</label>
@@ -84,18 +89,5 @@ export default function AuthGate({ children }) {
     );
   }
 
-  return (
-    <>
-      {children}
-      <div style={{ position: "fixed", bottom: 16, right: 16, zIndex: 99999, display: "flex", alignItems: "center", gap: 8, background: C.panel, border: `1px solid ${C.line}`, padding: "8px 8px 8px 14px", borderRadius: 12, fontFamily: "system-ui", boxShadow: "0 4px 18px rgba(0,0,0,.45)" }}>
-        <span style={{ fontSize: 12, color: C.sub }}>{session.user.email}</span>
-        <button
-          onClick={() => supabase.auth.signOut()}
-          style={{ fontSize: 12.5, fontWeight: 700, color: "#fff", background: C.red, border: "none", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "system-ui" }}
-        >
-          Đăng xuất
-        </button>
-      </div>
-    </>
-  );
+  return children;
 }
