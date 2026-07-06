@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, ReferenceLine, ReferenceDot,
 } from "recharts";
 import * as XLSX from "xlsx";
+import { saveInvoiceUpload, loadLatestInvoiceUpload } from "./lib/db";
 import {
   AlertTriangle, Wallet, Phone, FileSpreadsheet, CheckCircle2, Sparkles,
   ShieldCheck, ShieldAlert, TrendingDown, Tag, Activity, Zap, Wand2,
@@ -2287,6 +2288,24 @@ function InvoiceProcess_INV() {
 
   useEffect(() => () => clearInterval(timer.current), []);
 
+  // khôi phục lần upload gần nhất từ Supabase (nếu có)
+  useEffect(() => {
+    let alive = true;
+    loadLatestInvoiceUpload()
+      .then((saved) => {
+        if (!alive || !saved || !saved.lines.length) return;
+        setLines((cur) => {
+          if (cur) return cur; // user đã upload file mới trong lúc chờ
+          setMeta({ name: saved.meta.name, headerRow: saved.meta.headerRow, cols: saved.meta.cols, mapped: saved.meta.mapped });
+          setSel(0);
+          setStage(STAGES_INV.length); // pipeline coi như đã chạy xong
+          return saved.lines;
+        });
+      })
+      .catch((ex) => console.warn("Supabase load:", ex.message));
+    return () => { alive = false; };
+  }, []);
+
   const onFile = (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     setErr(""); clearInterval(timer.current); setStage(-1); setRunning(false);
@@ -2299,8 +2318,10 @@ function InvoiceProcess_INV() {
         const { lines: ls, colIndex, headerRow } = parseInvoices_INV(aoa);
         if (!ls.length) { setErr(t("inv.err.noRows")); setLines(null); return; }
         setLines(ls); setSel(0);
-        setMeta({ name: f.name, headerRow: headerRow + 1, cols: (aoa[headerRow] || []).length, mapped: Object.keys(colIndex).length });
+        const m = { name: f.name, headerRow: headerRow + 1, cols: (aoa[headerRow] || []).length, mapped: Object.keys(colIndex).length };
+        setMeta(m);
         runPipeline();
+        saveInvoiceUpload(f.name, m, ls).catch((ex) => console.warn("Supabase save:", ex.message));
       } catch (ex) { setErr(t("inv.err.read") + ex.message); setLines(null); }
     };
     reader.readAsArrayBuffer(f);
