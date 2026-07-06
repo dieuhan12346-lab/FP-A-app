@@ -87,13 +87,15 @@ export default function AuthGate({ children }) {
   return (
     <>
       {children}
-      <button
-        onClick={() => supabase.auth.signOut()}
-        title={session.user.email}
-        style={{ position: "fixed", bottom: 14, right: 14, zIndex: 9999, fontSize: 12, color: C.sub, background: C.panel, border: `1px solid ${C.line}`, padding: "7px 13px", borderRadius: 10, cursor: "pointer", fontFamily: "system-ui" }}
-      >
-        {session.user.email} · Đăng xuất
-      </button>
+      <div style={{ position: "fixed", bottom: 16, right: 16, zIndex: 99999, display: "flex", alignItems: "center", gap: 8, background: C.panel, border: `1px solid ${C.line}`, padding: "8px 8px 8px 14px", borderRadius: 12, fontFamily: "system-ui", boxShadow: "0 4px 18px rgba(0,0,0,.45)" }}>
+        <span style={{ fontSize: 12, color: C.sub }}>{session.user.email}</span>
+        <button
+          onClick={() => supabase.auth.signOut()}
+          style={{ fontSize: 12.5, fontWeight: 700, color: "#fff", background: C.red, border: "none", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "system-ui" }}
+        >
+          Đăng xuất
+        </button>
+      </div>
     </>
   );
 }
