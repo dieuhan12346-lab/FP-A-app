@@ -4,6 +4,8 @@ import {
   ResponsiveContainer, ReferenceLine, ReferenceDot,
 } from "recharts";
 import * as XLSX from "xlsx";
+import { useTranslation, I18nextProvider } from "react-i18next";
+import i18n, { setLanguage, applyUserLanguage } from "./i18n";
 import { saveInvoiceUpload, loadLatestInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
 import {
@@ -159,7 +161,8 @@ const RK_LABEL = { safe: "cf.lvl.safe2", watch: "cf.lvl.watch", warn: "cf.lvl.wa
 const heat = (s, pal) => (s < 0.05 ? pal.green : s < 0.25 ? pal.gold : s < 0.5 ? pal.orange : pal.red);
 
 function CashflowDashboard() {
-  const { t } = useT();
+  const { t, i18n: i18nInst } = useT();
+  const lang = i18nInst.language;
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
   const [scKey, setScKey] = useState("base");
   const [custom, setCustom] = useState({ rev: -0.20, cost: 0.05, delay: 2, haircut: 0.20 });
@@ -186,15 +189,16 @@ function CashflowDashboard() {
 
   const runOptimize = () => { const res = optimize(sc, seed, target); setPlan({ ...res, before: sim.pNeg }); setSelected(new Set(res.ids)); };
   const exportExcel = () => {
+    const scName = sc.key === "custom" ? t("cf.sc.custom") : t("sc." + sc.key);
     const wb = XLSX.utils.book_new();
-    const ov = [["BÁO CÁO DÒNG TIỀN & RỦI RO ÂM QUỸ"], ["Doanh nghiệp", COMPANY], ["Ngày lập", new Date().toLocaleDateString("vi-VN")], ["Kịch bản", sc.name], ["Xác suất âm quỹ 13 tuần", `${Math.round(sim.pNeg * 100)}%`], ["Mức rủi ro", rk.t], ["Đáy dòng tiền kỳ vọng (P50)", fmtVnd(sim.expMin)], ["Kịch bản xấu (P10)", fmtVnd(sim.worstMin)], ["Tuần rủi ro cao nhất", `Tuần ${sim.riskWeek + 1} (${RANGES[sim.riskWeek]})`], ["Thu hồi kỳ vọng (đã chọn)", fmtVnd(totalEV)], ["Số dư tiền mặt đầu kỳ", fmtVnd(START_CASH)]];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ov), "Tong quan");
-    const fc = [["Tuần", "Khoảng ngày", "P10 (tr)", "P50 (tr)", "P90 (tr)", "Dòng vào (tr)", "Dòng ra (tr)", "Rủi ro âm quỹ"]];
+    const ov = [[t("cf.xls.title")], [t("cf.xls.company"), COMPANY], [t("cf.xls.date"), new Date().toLocaleDateString(lang === "en" ? "en-US" : "vi-VN")], [t("cf.xls.scenario"), scName], [t("cf.xls.pneg13w"), `${Math.round(sim.pNeg * 100)}%`], [t("cf.xls.risklevel"), t(RK_LABEL[rk.key])], [t("cf.xls.trough"), fmtVnd(sim.expMin)], [t("cf.xls.worst"), fmtVnd(sim.worstMin)], [t("cf.xls.riskweek"), t("cf.xls.weekOf", { w: sim.riskWeek + 1, range: RANGES[sim.riskWeek] })], [t("cf.xls.evselected"), fmtVnd(totalEV)], [t("cf.xls.startcash"), fmtVnd(START_CASH)]];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ov), t("cf.xls.sheet.overview"));
+    const fc = [[t("cf.xls.col.week"), t("cf.xls.col.range"), "P10 (tr)", "P50 (tr)", "P90 (tr)", t("cf.xls.col.inflow"), t("cf.xls.col.outflow"), t("cf.xls.col.risk")]];
     sim.data.forEach((d) => fc.push([d.idx + 1, d.range, Math.round(d.p10), Math.round(d.p50), Math.round(d.p90), INFLOW[d.idx], OUTFLOW[d.idx], `${Math.round(d.negShare * 100)}%`]));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fc), "Du bao 13 tuan");
-    const dl = [["Khách hàng", "Mã TK", "Công nợ (tr)", "Quá hạn (ngày)", "Trả đúng hạn", "Xác suất thu hồi", "Thu kỳ vọng (tr)", "Thu dự kiến tuần", "Trong kế hoạch"]];
-    RECV.forEach((r) => { const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); dl.push([r.name, r.code, r.amount, r.days, `${Math.round(r.onTime * 100)}%`, `${Math.round(pEff * 100)}%`, Math.round(r.amount * pEff), `T${Math.min(13, r.collectWeek + sc.delay + 1)}`, selected.has(r.id) ? "Có" : ""]); });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dl), "Cong no thu hoi");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fc), t("cf.xls.sheet.forecast"));
+    const dl = [[t("cf.xls.col.customer"), t("cf.xls.col.acc"), t("cf.xls.col.debt"), t("cf.xls.col.overdue"), t("cf.xls.col.onTime"), t("cf.xls.col.prob"), t("cf.xls.col.ev"), t("cf.xls.col.collectW"), t("cf.xls.col.inPlan")]];
+    RECV.forEach((r) => { const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); dl.push([r.name, r.code, r.amount, r.days, `${Math.round(r.onTime * 100)}%`, `${Math.round(pEff * 100)}%`, Math.round(r.amount * pEff), `T${Math.min(13, r.collectWeek + sc.delay + 1)}`, selected.has(r.id) ? t("cf.xls.yes") : ""]); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dl), t("cf.xls.sheet.receivables"));
     XLSX.writeFile(wb, "BaoCao_DongTienAI.xlsx");
   };
 
@@ -2213,10 +2217,10 @@ function parseInvoices_INV(aoa) {
 /* TT200 journal entries for a sales-invoice line */
 function classify_INV(ln) {
   const e = [];
-  e.push({ acc: "131", side: "Nợ", name: `Phải thu KH${ln.buyer ? " · " + ln.buyer : ""}`, amount: ln.total, c: C_INV.green });
-  if (ln.ck > 0) e.push({ acc: "521", side: "Nợ", name: "Chiết khấu thương mại", amount: ln.ck, c: C_INV.orange });
-  e.push({ acc: "511", side: "Có", name: "Doanh thu bán hàng & CCDV", amount: ln.net, c: C_INV.cyan });
-  if (ln.vat > 0) e.push({ acc: "3331", side: "Có", name: `Thuế GTGT đầu ra (${ln.vatRate || 0}%)`, amount: ln.vat, c: C_INV.violet });
+  e.push({ acc: "131", side: "Nợ", nameKey: "inv.entry.receivable", nameVars: { buyer: ln.buyer ? " · " + ln.buyer : "" }, amount: ln.total, c: C_INV.green });
+  if (ln.ck > 0) e.push({ acc: "521", side: "Nợ", nameKey: "inv.entry.discount", amount: ln.ck, c: C_INV.orange });
+  e.push({ acc: "511", side: "Có", nameKey: "inv.entry.revenue", amount: ln.net, c: C_INV.cyan });
+  if (ln.vat > 0) e.push({ acc: "3331", side: "Có", nameKey: "inv.entry.vatOut", nameVars: { rate: ln.vatRate || 0 }, amount: ln.vat, c: C_INV.violet });
   return e;
 }
 /* anomaly checks per line */
@@ -2224,9 +2228,9 @@ function checkLine_INV(ln) {
   const out = [];
   const calcNet = Math.round(ln.amount - ln.ck);
   const calcTotal = Math.round(ln.net + ln.vat);
-  out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, label: "Tổng = (tiền hàng − CK) + thuế", v: `${calcTotal.toLocaleString("vi-VN")} ≈ ${Math.round(ln.total).toLocaleString("vi-VN")}` });
-  out.push({ ok: /^\d{10}(-\d{3})?$/.test(ln.buyerTax), label: "MST người mua hợp lệ", v: ln.buyerTax || "(trống)" });
-  out.push({ ok: ln.vatRate > 0, label: "Có thuế suất GTGT", v: ln.vatRate ? ln.vatRate + "%" : "(trống)" });
+  out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, labelKey: "inv.check.totalMatch", v: `${calcTotal.toLocaleString("vi-VN")} ≈ ${Math.round(ln.total).toLocaleString("vi-VN")}` });
+  out.push({ ok: /^\d{10}(-\d{3})?$/.test(ln.buyerTax), labelKey: "inv.check.taxIdValid", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
+  out.push({ ok: ln.vatRate > 0, labelKey: "inv.check.hasVatRate", v: ln.vatRate ? ln.vatRate + "%" : "", vKey: ln.vatRate ? null : "inv.check.empty" });
   return out;
 }
 
@@ -2460,7 +2464,7 @@ function InvoiceProcess_INV() {
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: C_INV.panel2, border: `1px solid ${C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 15, fontWeight: 800, color: r.c, width: 42 }}>{r.acc}</span>
                       <span style={{ fontSize: 9.5, fontWeight: 800, color: r.side === "Nợ" ? C_INV.cyan : C_INV.orange, background: (r.side === "Nợ" ? C_INV.cyan : C_INV.orange) + "1f", padding: "2px 7px", borderRadius: 6, width: 32, textAlign: "center" }}>{r.side === "Nợ" ? t("inv.side.no") : t("inv.side.co")}</span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(r.nameKey, r.nameVars)}</span>
                       <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{fmtVnd_INV(r.amount)}</span>
                     </div>
                   ))}
@@ -2471,8 +2475,8 @@ function InvoiceProcess_INV() {
                   {checkLine_INV(cur).map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 9, alignItems: "center", padding: "8px 11px", borderRadius: 9, background: c.ok ? C_INV.greenSoft : C_INV.orangeSoft, border: `1px solid ${(c.ok ? C_INV.green : C_INV.orange)}33` }}>
                       {c.ok ? <CheckCircle2 size={14} color={C_INV.green} style={{ flex: "0 0 auto" }} /> : <AlertTriangle size={14} color={C_INV.orange} style={{ flex: "0 0 auto" }} />}
-                      <span style={{ fontSize: 11.8, fontWeight: 600, flex: 1 }}>{c.label}</span>
-                      <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{c.v}</span>
+                      <span style={{ fontSize: 11.8, fontWeight: 600, flex: 1 }}>{t(c.labelKey)}</span>
+                      <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{c.vKey ? t(c.vKey) : c.v}</span>
                     </div>
                   ))}
                 </div>
@@ -2551,612 +2555,7 @@ function CashTipInv({ active, payload }) {
 }
 
 /* ================= APP SHELL (sidebar navigation) ================= */
-/* ===================== i18n (song ngữ Việt-Anh) ===================== */
-/* Từ điển: mỗi khóa có 2 ngôn ngữ. Thêm chuỗi mới = thêm 1 dòng vào đây. */
-const I18N = {
-  vi: {
-    "app.tagline": "Operational Decision System",
-    "app.status": "Hệ thống hoạt động",
-    "sidebar.collapse": "Thu gọn",
-    "user.role": "Kế toán trưởng · đang trực tuyến",
-    // NAV
-    "nav.cashflow": "Dòng tiền",          "nav.cashflow.desc": "Dự báo · Stress-test · Thu hồi",
-    "nav.fpa": "FP&A Automation",         "nav.fpa.desc": "Dự báo ML · Kịch bản · Cảnh báo",
-    "nav.ops": "Agent Vận hành",          "nav.ops.desc": "Kho · Đặt hàng · Tối ưu tuyến",
-    "nav.credit": "Chấm điểm tín dụng",   "nav.credit.desc": "Xếp hạng đối tác B2B",
-    "nav.collect": "Nhắc nợ tự động",     "nav.collect.desc": "Email · Zalo · SMS · lịch gọi",
-    "nav.invoice": "Đọc hóa đơn",         "nav.invoice.desc": "Tải Excel/CSV · định khoản TT200 · vào dòng tiền",
-    "nav.pricing": "Gói & Định giá",      "nav.pricing.desc": "Land-and-Expand",
-    // Invoice module
-    "inv.title": "Đọc hóa đơn từ file",
-    "inv.subtitle": "Tải bảng kê hóa đơn (Excel/CSV) → định khoản TT200 → vào dòng tiền",
-    "inv.upload": "Tải file hóa đơn",
-    "inv.reset": "Đặt lại",
-    "inv.err.noRows": "Không tìm thấy dòng hóa đơn. Kiểm tra file có cột STT / Số HĐ / Tổng thanh toán.",
-    "inv.err.read": "Lỗi đọc file: ",
-    "inv.empty.title": "Tải lên bảng kê hóa đơn",
-    "inv.empty.desc": "Hỗ trợ file .xlsx / .xls / .csv xuất từ MISA meInvoice hoặc FAST. Hệ thống tự nhận dòng tiêu đề, ánh xạ cột (Số HĐ · MST · Tiền hàng · Thuế suất · Tổng…), định khoản theo Thông tư 200 và đưa khoản phải thu vào dự báo dòng tiền.",
-    "inv.meta": "{n} hóa đơn · header dòng {row} · {cols} cột nhận diện",
-    "inv.stage.ocr": "Đọc file & bóc tách",       "inv.stage.ocr.d": "Nhận diện dòng tiêu đề, ánh xạ cột",
-    "inv.stage.cls": "Định khoản TT200",          "inv.stage.cls.d": "Sinh bút toán cho từng hóa đơn",
-    "inv.stage.chk": "Đối chiếu & cảnh báo",      "inv.stage.chk.d": "Cân khớp tổng tiền, MST, thuế suất",
-    "inv.stage.cash": "Bơm vào dòng tiền",        "inv.stage.cash.d": "Đưa khoản phải thu vào dự báo 13 tuần",
-    "inv.kpi.count": "Số hóa đơn",
-    "inv.kpi.net": "Doanh thu thuần (TK 511)",
-    "inv.kpi.vat": "Thuế GTGT đầu ra (TK 3331)",
-    "inv.kpi.total": "Tổng phải thu (TK 131)",
-    "inv.tbl.read": "Hóa đơn đã đọc · {n} dòng",
-    "inv.tbl.no": "Số HĐ", "inv.tbl.customer": "Khách hàng", "inv.tbl.total": "Tổng TT", "inv.tbl.tax": "Thuế", "inv.tbl.warn": "Cảnh báo",
-    "inv.noname": "(không tên)",
-    "inv.sumrow": "Tổng cộng",
-    "inv.detail.title": "Chi tiết & định khoản · HĐ {no}",
-    "inv.cash.title": "Dòng tiền 13 tuần — trước & sau khi thu các hóa đơn này",
-    "inv.cash.merged": "Đã hợp nhất {n} khoản",
-    "inv.cash.spread": "Tổng phải thu +{v} được rải vào các tuần theo ngày hóa đơn + kỳ hạn ~4 tuần · đơn vị: triệu đồng.",
-    "inv.cash.minBase": "Đáy quỹ — chưa thu HĐ",
-    "inv.cash.minRecv": "Đáy quỹ — sau khi thu HĐ",
-    "inv.cash.improve": "Cải thiện đáy quỹ",
-    "inv.cash.negFrom": "Âm từ Tuần {w}",
-    "inv.cash.noNeg": "Không âm",
-    "inv.cash.noNegAll": "Không âm cả 13 tuần",
-    "inv.cash.thanksTo": "Nhờ thu {v}",
-    "inv.cash.after": "Sau khi thu hóa đơn",
-    "inv.cash.before": "Chưa thu (gốc)",
-    "inv.cash.running": "Đang chạy phân tích để hợp nhất khoản phải thu vào dòng tiền…",
-    "inv.chart.week": "Tuần",
-    "inv.tip.after": "Sau khi thu HĐ", "inv.tip.before": "Chưa thu (gốc)", "inv.tip.collect": "Thu hóa đơn",
-    "inv.footer": "Đọc trực tiếp file Excel/CSV bạn tải lên · phân loại tham chiếu Thông tư 200/2014/TT-BTC · không phải tư vấn kế toán — cần kế toán rà soát trước khi hạch toán.",
-    "inv.side.no": "Nợ", "inv.side.co": "Có",
-    // Cashflow module
-    "cf.subtitle": "Dự báo · Stress-test · Cảnh báo sớm · Kế hoạch thu hồi",
-    "cf.exportExcel": "Xuất Excel", "cf.reportPDF": "Báo cáo PDF",
-    "cf.connect": "Kết nối phần mềm", "cf.connect.desc": "· chọn nguồn dữ liệu để nạp vào dự báo",
-    "cf.connected": "Đã kết nối {n}/{m}", "cf.connectedNone": "Chưa kết nối nguồn nào",
-    "cf.notConnected": "chưa kết nối", "cf.connBtn": "Kết nối", "cf.connDone": "Đã nối",
-    "cf.stressTitle": "Kịch bản Stress-test", "cf.stressDesc": "— mô phỏng dòng tiền khi thị trường biến động",
-    "cf.custom": "Tùy chỉnh", "cf.customDesc": "Tự kéo thanh trượt",
-    "cf.sl.rev": "Thay đổi doanh thu", "cf.sl.cost": "Tăng chi phí", "cf.sl.delay": "Độ trễ thu hồi", "cf.sl.haircut": "Tỷ lệ nợ khó đòi tăng",
-    "cf.week": "Tuần", "cf.weeks": "tuần",
-    "cf.earlyWarn": "Cảnh báo sớm: {p}% khả năng âm quỹ trong 13 tuần — {lvl}",
-    "cf.safeMsg": "Mô phỏng 1.400 kịch bản: đáy kỳ vọng {min}. Kế hoạch hiện tại đủ chống chịu kịch bản \"{sc}\".",
-    "cf.riskMsg.pre": "Rủi ro tập trung ở", "cf.riskMsg.trough": "Đáy kỳ vọng", "cf.riskMsg.worst": "xấu (P10)",
-    "cf.kpi.cash": "Tiền mặt hiện tại", "cf.kpi.cash.sub": "Số dư đầu kỳ · TK 111+112",
-    "cf.kpi.pneg": "Xác suất âm quỹ", "cf.kpi.pneg.sub": "Kịch bản: {sc}",
-    "cf.kpi.trough": "Đáy dòng tiền kỳ vọng", "cf.kpi.trough.sub": "Trung vị P50 các kịch bản",
-    "cf.kpi.worst": "Kịch bản xấu (P10)", "cf.kpi.worst.sub": "Mức 10% tệ nhất",
-    "cf.chartTitle": "Dự báo dòng tiền 13 tuần", "cf.leg.p50": "Kỳ vọng (P50)", "cf.leg.band": "Tin cậy 80%",
-    "cf.chartUnit": "Đơn vị: triệu đồng · dải mờ là vùng dao động P10–P90",
-    "cf.detect": "Phát hiện sớm rủi ro", "cf.detectSub": "khả năng quỹ tiền mặt chạm âm",
-    "cf.lvl.safe2": "An toàn", "cf.lvl.watch": "Theo dõi", "cf.lvl.warn2": "Cảnh báo", "cf.lvl.crit": "Nguy cấp",
-    "cf.weeklyRisk": "Rủi ro âm quỹ theo tuần",
-    "cf.riskWeek": "Tuần rủi ro cao nhất", "cf.evSelected": "Thu hồi kỳ vọng (đã chọn)",
-    "cf.opt.title": "AI đề xuất kế hoạch thu hồi tối ưu",
-    "cf.opt.desc1": "AI dò mọi tổ hợp khách hàng để tìm danh sách", "cf.opt.desc2": "ít người & dễ thu nhất", "cf.opt.desc3": "giúp đưa rủi ro âm quỹ về dưới ngưỡng bạn chọn.",
-    "cf.opt.threshold": "Ngưỡng rủi ro chấp nhận:", "cf.opt.run": "Chạy tối ưu hoá",
-    "cf.opt.call": "Gọi {n} khách hàng: {names}",
-    "cf.opt.from": "Đưa xác suất âm quỹ từ", "cf.opt.applied": "(đạt ngưỡng ≤ {t}%). Đã áp dụng vào danh sách bên dưới.",
-    "cf.opt.fail": "Kể cả thu hết 6 khách hàng, rủi ro vẫn còn",
-    "cf.opt.failTail": "— vượt ngưỡng ≤ {t}%. Cần giãn lịch chi/trả NCC, đàm phán hạn mức tín dụng hoặc thu xếp vốn lưu động.",
-    "cf.list.title": "Mô hình xác suất thu hồi & danh sách gọi đòi nợ",
-    "cf.list.desc": "Xác suất chấm theo: số ngày quá hạn · lịch sử trả đúng hạn · quy mô công nợ.",
-    "cf.list.scenario": "Kịch bản \"{sc}\" giảm xác suất thu hồi {p}%.",
-    "cf.col.customer": "Khách hàng", "cf.col.overdue": "Quá hạn", "cf.col.debt": "Công nợ", "cf.col.prob": "Xác suất thu hồi", "cf.col.ev": "Thu kỳ vọng", "cf.col.collectW": "Thu T?",
-    "cf.aiSuggest": "ĐỀ XUẤT", "cf.onTime": "trả đúng hạn {p}%", "cf.days": "ngày",
-    "cf.classTitle": "Phân loại tự động theo Thông tư 200",
-    "cf.classDesc": "Đối chiếu nội dung bút toán với hệ thống tài khoản TT200/2014/TT-BTC · độ chính xác 97,4%",
-    "cf.entries": "bút toán",
-    "cf.footer": "Bản demo · Monte Carlo 1.400 kịch bản · Tham chiếu Anaplan / Vena / Clockwork AI · Không phải tư vấn tài chính — cần kế toán rà soát trước khi ra quyết định.",
-    // scenario presets
-    "sc.base": "Bình thường", "sc.base.d": "Thị trường ổn định",
-    "sc.slow": "Giảm tốc", "sc.slow.d": "DT −12% · trả chậm +1 tuần",
-    "sc.reces": "Suy thoái", "sc.reces.d": "DT −25% · thu hồi khó hơn",
-    "sc.shock": "Sốc thanh khoản", "sc.shock.d": "DT −40% · nợ khó đòi tăng mạnh",
-    // classification names
-    "acc.511": "Doanh thu bán hàng & CCDV", "acc.131": "Phải thu của khách hàng", "acc.112": "Tiền gửi ngân hàng",
-    "acc.331": "Phải trả cho người bán", "acc.334": "Phải trả người lao động", "acc.642": "Chi phí quản lý DN",
-    "acc.641": "Chi phí bán hàng", "acc.333": "Thuế & phải nộp NN",
-    "cf.tip.p50": "Kỳ vọng (P50)", "cf.tip.p90": "Tốt (P90)", "cf.tip.p10": "Xấu (P10)", "cf.tip.risk": "Rủi ro âm quỹ",
-    "note.rent": "Thuê văn phòng", "note.vat": "Nộp thuế GTGT", "note.salary1": "Trả lương kỳ 1", "note.supplier": "Thanh toán NCC lớn", "note.cit": "Nộp thuế TNDN", "note.salary2": "Trả lương kỳ 2", "note.salary3": "Trả lương kỳ 3",
-    // Report (PDF)
-    "rp.back": "Quay lại bảng điều khiển", "rp.tip": "Mẹo: trong hộp thoại in, chọn", "rp.saveAs": "\"Lưu thành PDF / Save as PDF\"", "rp.print": "In / Lưu PDF",
-    "rp.appsub": "Trợ lý phân tích dòng tiền & nhắc nợ tự động",
-    "rp.title": "BÁO CÁO DÒNG TIỀN & CẢNH BÁO RỦI RO",
-    "rp.date": "Ngày lập:", "rp.scenario": "Kịch bản:", "rp.company": "Doanh nghiệp:", "rp.period": "Kỳ phân tích:",
-    "rp.pneg": "Xác suất âm quỹ",
-    "rp.cashStart": "Tiền mặt đầu kỳ", "rp.trough": "Đáy dòng tiền kỳ vọng (P50)", "rp.riskWeek": "Tuần rủi ro cao nhất", "rp.worst": "Kịch bản xấu (P10)",
-    "rp.sec1": "Nhận định & khuyến nghị",
-    "rp.sec2": "Dự báo dòng tiền 13 tuần (Monte Carlo 1.400 kịch bản)",
-    "rp.chartNote": "Đơn vị: triệu đồng · vùng tô là khoảng tin cậy 80% (P10–P90) · đường liền là kỳ vọng (P50)",
-    "rp.sec3": "Danh sách công nợ cần thu hồi · {n} khoản trong kế hoạch",
-    "rp.th.customer": "Khách hàng", "rp.th.acc": "Mã TK", "rp.th.debt": "Công nợ", "rp.th.overdue": "Quá hạn", "rp.th.prob": "Xác suất", "rp.th.ev": "Thu kỳ vọng", "rp.th.week": "Tuần", "rp.th.plan": "Kế hoạch",
-    "rp.totalRow": "Tổng thu hồi kỳ vọng theo kế hoạch:",
-    "rp.sig.maker": "Người lập báo cáo", "rp.sig.chief": "Kế toán trưởng", "rp.sig.director": "Giám đốc", "rp.sig.note": "(Ký, ghi rõ họ tên)",
-    "rp.disclaimer": "Báo cáo tạo tự động bởi Dòng Tiền AI từ dữ liệu hợp nhất MISA, ERP (SAP/Oracle), CRM (Salesforce) & ngân hàng (phân loại theo Thông tư 200/2014/TT-BTC). Số liệu mang tính dự báo, không phải tư vấn tài chính — cần kế toán rà soát trước khi ra quyết định.",
-    "rp.verdict.safe": "Theo kịch bản \"{sc}\", quỹ tiền mặt được dự báo an toàn trong cả 13 tuần (xác suất âm quỹ {p}%). Đáy dòng tiền kỳ vọng đạt {min}. Khuyến nghị duy trì kế hoạch thu hồi công nợ hiện tại và tiếp tục theo dõi tuần.",
-    "rp.verdict.risk": "Theo kịch bản \"{sc}\", quỹ tiền mặt có {p}% khả năng chạm ngưỡng âm trong 13 tuần (mức rủi ro: {lvl}), tập trung tại Tuần {w} ({range}). Đáy kỳ vọng {min}, kịch bản xấu {worst}. Khuyến nghị ưu tiên thu hồi {n} khoản công nợ trọng yếu (giá trị kỳ vọng {ev}) trước các tuần chi lớn.",
-    // FP&A module
-    "fpa.subtitle": "Hệ thống đưa ra quyết định tài chính — thay cho Excel thủ công",
-    "fpa.badge": "Operational Decision System",
-    "fpa.intro1": "Ba lớp tự động hóa thay thế quy trình Excel:", "fpa.intro.ml": "dự báo bằng Machine Learning", "fpa.intro.mld": "(chuỗi thời gian LSTM + chỉ số vĩ mô)", "fpa.intro.scen": "phân tích đa kịch bản", "fpa.intro.risk": "phát hiện rủi ro", "fpa.intro.end": "& cảnh báo sớm.",
-    "fpa.p1.title": "Dự báo dòng tiền thông minh", "fpa.p1.badge": "Mô hình LSTM · sai số 4,2%",
-    "fpa.p1.desc": "Chuỗi thời gian LSTM kết hợp chỉ số vĩ mô · dải mờ là khoảng tin cậy (độ bất định tăng theo thời gian).",
-    "fpa.trough": "đáy quỹ · Tuần {w}", "fpa.neg": "âm quỹ",
-    "fpa.p2.title": "Chỉ số vĩ mô đầu vào", "fpa.p2.desc": "Mô hình tự cập nhật các biến bên ngoài và đo mức độ ảnh hưởng tới dự báo.",
-    "fpa.influence": "ảnh hưởng", "fpa.signal": "Tín hiệu nổi bật:",
-    "fpa.signalText": "giá nguyên vật liệu +6,5% là biến số tác động mạnh nhất — mô hình tự kích hoạt kịch bản Stress-test.",
-    "fpa.p3.title": "Phát hiện rủi ro tự động", "fpa.scanning": "Đang quét liên tục",
-    "fpa.urgent": "khẩn cấp", "fpa.warns": "cảnh báo",
-    "fpa.p3.desc1": "Tự động quét công nợ quá hạn, chi phí bất thường & nguy cơ thiếu hụt thanh khoản — cảnh báo trước", "fpa.p3.desc2": "30–60 ngày",
-    "fpa.footer": "Bản demo trụ cột FP&A Automation · dữ liệu & kết nối mô phỏng · mô hình LSTM + biến vĩ mô · liên kết được với Agent vận hành & nhắc nợ tự động.",
-    // scenarios
-    "fpa.scen.best": "Tốt nhất", "fpa.scen.base": "Bình thường", "fpa.scen.stress": "Khủng hoảng",
-    // macro signals
-    "fpa.macro.cpi": "Lạm phát (CPI)", "fpa.macro.rate": "Lãi suất điều hành", "fpa.macro.fx": "Tỷ giá USD/VND", "fpa.macro.mat": "Giá nguyên vật liệu",
-    // severity
-    "fpa.sev.high": "Khẩn cấp", "fpa.sev.medium": "Cảnh báo", "fpa.sev.low": "Theo dõi",
-    // alerts
-    "fpa.al.a1.t": "Công nợ quá hạn nghiêm trọng", "fpa.al.a1.d": "Cty TNHH Minh Phát — 320tr quá hạn 45 ngày, vượt hạn mức tín dụng. Rủi ro thành nợ xấu.", "fpa.al.a1.e": "Cần xử lý ngay",
-    "fpa.al.a2.t": "Nguy cơ thiếu hụt thanh khoản", "fpa.al.a2.d": "Mô hình dự báo quỹ tiền mặt chạm đáy dưới ngưỡng an toàn vào Tuần 6 do dồn lương + thuế + thanh toán NCC.", "fpa.al.a2.m": "~48 ngày tới", "fpa.al.a2.e": "Cảnh báo trước 48 ngày",
-    "fpa.al.a3.t": "Chi phí bất thường", "fpa.al.a3.d": "Chi phí logistics tháng này +38% so với trung bình 6 tháng — cao bất thường, nên rà soát hợp đồng vận chuyển.", "fpa.al.a3.e": "Phát hiện hôm nay",
-    "fpa.al.a4.t": "Cụm công nợ sắp quá hạn", "fpa.al.a4.d": "4 khách hàng (tổng 215tr) sẽ quá hạn trong 7–14 ngày tới. Nên chủ động nhắc nợ trước.", "fpa.al.a4.e": "Trong 14 ngày",
-    "fpa.tip.ci": "Khoảng tin cậy",
-    // Ops agent module
-    "ops.title": "Agent Vận Hành ↔ Dòng Tiền", "ops.subtitle1": "Mỗi đơn đặt hàng tự kiểm tra: đủ hàng", "ops.subtitle.and": "và", "ops.subtitle2": "đủ tiền?",
-    "ops.auto": "Tự trị", "ops.paused": "Tạm dừng", "ops.weekN": "Tuần {n}", "ops.weekShort": "T",
-    "ops.fastForward": "Tua nhanh 1 tuần", "ops.runAuto": "Chạy tự trị", "ops.stop": "Dừng", "ops.reset": "Đặt lại",
-    "ops.mini.atRisk": "SKU dưới ngưỡng", "ops.mini.trough": "Đáy quỹ dự báo", "ops.mini.po": "PO đã duyệt",
-    "ops.chart.title": "Dự báo dòng tiền 13 tuần", "ops.lg.now": "Hiện tại", "ops.lg.full": "Nếu đặt đủ", "ops.lg.balanced": "Sau cân bằng",
-    "ops.chart.unit": "Đơn vị: triệu đồng · đường nét đứt đỏ = tác động nếu đặt đơn đầy đủ ngay.",
-    "ops.inv.title": "Giám sát tồn kho", "ops.demand": "nhu cầu +{p}%", "ops.daysLeft": "còn ~{d} ngày",
-    "ops.decision": "Quyết định của Agent", "ops.running": "ĐANG CHẠY",
-    "ops.idle1": "Agent đang giám sát. Bấm", "ops.idle.btn": "\"Tua nhanh 1 tuần\"", "ops.idle2": "để mô phỏng bán hàng. Khi một SKU chạm ngưỡng, Agent sẽ soạn đơn rồi", "ops.idle.cash": "kiểm tra tác động lên dòng tiền", "ops.idle3": "ngay tại đây.",
-    "ops.poSuggest": "Đơn đề xuất", "ops.poFrom": "{qty} đv từ {sup} · giao sau ~{lead} ngày",
-    "ops.safe": "Đủ hàng & đủ tiền", "ops.conflict": "Xung đột: đặt đủ sẽ thiếu tiền!",
-    "ops.safeText": "Đặt đơn đầy đủ vẫn giữ đáy quỹ {min} (trên ngưỡng an toàn {floor}tr).",
-    "ops.conflictText1": "Đặt đủ ngay sẽ kéo đáy quỹ xuống", "ops.conflictNeg": "(ÂM từ Tuần {w})", "ops.conflictText2": ". Agent đề xuất phương án cân bằng:",
-    "ops.aiPick": "AI CHỌN", "ops.trough": "đáy quỹ",
-    "ops.approve": "Phê duyệt phương án", "ops.reject": "Từ chối",
-    "ops.logTitle": "Nhật ký", "ops.footer": "Bản demo · Agent vận hành đồng bộ trực tiếp với mô hình dòng tiền · ngưỡng quỹ an toàn {floor}tr · không phải tư vấn tài chính.",
-    // step labels
-    "ops.step.detect": "Phát hiện tồn kho dưới ngưỡng", "ops.step.po": "Soạn đơn đặt hàng tối ưu", "ops.step.cash": "Bơm PO vào dự báo dòng tiền 13 tuần", "ops.step.balance": "Cân bằng: đủ hàng ↔ đủ tiền", "ops.step.await": "Chờ phê duyệt",
-    // strategy labels
-    "ops.strat.full": "Đặt đủ, trả ngay kỳ hạn", "ops.strat.delay": "Giãn thanh toán sang Tuần {w}", "ops.strat.split": "Chia đơn: đặt {q1}/{qty} đv trước", "ops.strat.splitNote": "Đặt nốt {rest} đv sau 3 tuần", "ops.strat.negotiate": "Đổi NCC trả chậm {w} tuần (Tân Á)",
-    // tooltip
-    "ops.tip.bal": "Số dư hiện tại", "ops.tip.full": "Nếu đặt đủ", "ops.tip.balanced": "Sau cân bằng", "ops.tip.poOut": "Chi cho PO",
-    // log messages
-    "ops.log.boot": "Agent khởi động · giám sát kho & đồng bộ dòng tiền theo thời gian thực.",
-    "ops.log.reset": "Đã đặt lại mô phỏng.",
-    "ops.log.arrive": "Hàng về kho: +{qty} {sku}.",
-    "ops.log.start": "⚡ {sku} chạm ngưỡng (tồn {stock} ≤ {reorder}), nhu cầu +{p}%. Bắt đầu phân tích.",
-    "ops.log.s0": "{name}: còn ~{d} ngày là cạn.",
-    "ops.log.s1": "Soạn PO: {qty} đv từ {sup}, trị giá {cost}.",
-    "ops.log.s2safe": "Bơm PO vào dự báo → đáy quỹ vẫn an toàn.",
-    "ops.log.s2risk": "Bơm PO vào dự báo → đáy quỹ rơi xuống {min}{neg}.",
-    "ops.log.s2neg": ", ÂM từ Tuần {w}",
-    "ops.log.s3safe": "Đủ hàng & đủ tiền → giữ phương án đặt đủ.",
-    "ops.log.s3conflict": "Xung đột đủ hàng ↔ đủ tiền! Chọn \"{label}\" → nâng đáy quỹ lên {min}.",
-    "ops.log.approve": "✓ Duyệt {id} ({label}). Trả {cost} vào Tuần {payW}, hàng về Tuần {arrW}.",
-    "ops.log.reject": "✕ Từ chối đề xuất cho {sku}.",
-    // SKU names
-    "ops.sku.A12": "Bột mì số 11 (bao 25kg)", "ops.sku.C33": "Hộp giấy đóng gói (kiện)", "ops.sku.E20": "Đường tinh luyện (bao 50kg)", "ops.sku.D51": "Men nở khô (thùng 10kg)",
-    // DebtCollect module
-    "col.title": "Nhắc nợ tự động",
-    "col.subtitle": "AI soạn nội dung & lên lịch đòi nợ theo mức độ khẩn · đa kênh",
-    "col.badge": "AI tự soạn theo từng khách",
-    "col.list.title": "Danh sách cần nhắc",
-    "col.foreign": "Doanh nghiệp nước ngoài",
-    "col.overdue": "quá hạn {d} ngày",
-    "col.list.footer": "Thanh % = xác suất thu hồi · ưu tiên khách quá hạn lâu & giá trị lớn trước.",
-    "col.tone": "Giọng văn: {label}",
-    "col.tier.urgent": "Khẩn cấp", "col.tier.firm": "Nhắc mạnh", "col.tier.gentle": "Nhắc nhẹ",
-    "col.ai.drafted": "AI đã soạn", "col.ai.note": "nội dung mẫu, sửa lại trước khi gửi",
-    "col.subject": "Tiêu đề: ",
-    "col.sent": "Đã gửi {ch}", "col.send": "Gửi nhắc qua {ch}",
-    "col.schedule.btn": "Lên lịch tự động",
-    "col.sched.title": "Lịch nhắc & leo thang tự động",
-    "col.sched.d1": "Hôm nay",   "col.sched.act1": "Gửi nhắc lần 1 (Email + Zalo)",
-    "col.sched.d2": "+3 ngày",   "col.sched.act2": "Nếu chưa thanh toán → nhắc lần 2 (SMS)",
-    "col.sched.d3": "+7 ngày",   "col.sched.act3": "Leo thang → gọi điện trực tiếp",
-    "col.sched.d4": "+14 ngày",  "col.sched.act4": "Chuyển bộ phận xử lý công nợ",
-    "col.footer": "Bản demo · AI soạn nội dung nhắc nợ theo mức độ khẩn · đa kênh Email/Zalo/SMS · lịch & leo thang tự động · không phải tư vấn pháp lý.",
-    // CreditScore module
-    "cr.title": "Agent Chấm điểm Tín dụng",
-    "cr.subtitle": "Chấm điểm đối tác B2B & đề xuất hạn mức công nợ an toàn",
-    "cr.badge": "Module của Agent Vận Hành",
-    "cr.partners": "Đối tác B2B",
-    "cr.datasources": "Nguồn dữ liệu: báo cáo tài chính · lịch sử thanh toán · dữ liệu ngành — tổng hợp & chấm điểm tự động.",
-    "cr.ind.food": "Sản xuất thực phẩm", "cr.ind.construction": "Xây dựng", "cr.ind.retail": "Bán lẻ", "cr.ind.logistics": "Logistics",
-    "cr.revFmt": "{n} tỷ/năm",
-    "cr.rev": "doanh thu {rev}", "cr.req": "đề nghị hạn mức {r} tr",
-    "cr.scoring": "Đang chấm…", "cr.rescore": "Chấm lại", "cr.score.btn": "Chấm điểm",
-    "cr.idle.hint": "Bấm nút Chấm điểm để AI phân tích báo cáo tài chính, lịch sử thanh toán và dữ liệu ngành của đối tác.",
-    "cr.analyzing": "Đang phân tích các yếu tố…",
-    "cr.transparent": "Phân tích minh bạch — vì sao điểm này",
-    "cr.weight": "tỷ trọng {w}%",
-    "cr.f.liquidity": "Khả năng thanh khoản", "cr.f.leverage": "Đòn bẩy & nợ vay",
-    "cr.f.payment": "Lịch sử thanh toán", "cr.f.industry": "Sức khỏe ngành", "cr.f.size": "Quy mô & thâm niên",
-    "cr.src.financial": "Báo cáo tài chính", "cr.src.transactions": "Dữ liệu giao dịch",
-    "cr.src.industry": "Dữ liệu ngành", "cr.src.profile": "Hồ sơ doanh nghiệp",
-    "cr.grade.AA": "Rủi ro rất thấp", "cr.grade.A": "Rủi ro thấp", "cr.grade.BBB": "Rủi ro trung bình",
-    "cr.grade.BB": "Rủi ro cao", "cr.grade.B": "Rủi ro rất cao",
-    "cr.grade.badge": "Hạng {g} · {label}",
-    "cr.limit.title": "Hạn mức công nợ an toàn đề xuất",
-    "cr.limit.requested": "Đối tác đề nghị", "cr.limit.approved": "AI duyệt", "cr.limit.ratio": "Tỷ lệ duyệt",
-    "cr.limit.good": "Hồ sơ tốt (hạng {g}) — có thể duyệt đủ hạn mức {req}tr đối tác đề nghị, kèm theo dõi định kỳ.",
-    "cr.limit.reduced": "Với hạng {g} ({label}), AI khuyến nghị cấp {safe}tr thay vì {req}tr để kiểm soát rủi ro nợ xấu. Yếu tố kéo điểm: {weak}.",
-    "cr.apply": "Áp dụng hạn mức", "cr.schedule": "Đặt lịch rà soát lại",
-    "cr.score.unit": "/ 100 điểm",
-    "cr.footer": "Bản demo · chấm điểm bằng mô hình có trọng số minh bạch · dữ liệu mô phỏng · liên kết với Agent vận hành & dự báo dòng tiền · không phải tư vấn tín dụng.",
-    "cr.weak.liquidity": "thanh khoản yếu", "cr.weak.leverage": "đòn bẩy nợ cao",
-    "cr.weak.payment": "lịch sử thanh toán chưa tốt", "cr.weak.industry": "ngành nhiều biến động", "cr.weak.size": "quy mô nhỏ",
-    // PricingPlans module
-    "pr.badge": "Định giá theo Quy mô dữ liệu & Giá trị mang lại",
-    "pr.headline": "Vào bằng cửa nhỏ. Lớn lên khi bạn cần.",
-    "pr.intro.start": "Bắt đầu với", "pr.intro.base": "Gói Khởi động", "pr.intro.mid": "chỉ để dự báo dòng tiền. Khi doanh nghiệp cần, kích hoạt thêm từng",
-    "pr.intro.agent": "AI Agent", "pr.intro.end": "— trả thêm đúng phần giá trị bạn mở rộng.",
-    "pr.base.name": "Gói Khởi động", "pr.base.tag": "NỀN TẢNG · BẮT BUỘC",
-    "pr.base.desc": "FP&A Only — dành cho CEO/CFO quản trị dòng tiền.",
-    "pr.month": "/tháng",
-    "pr.scale.title": "Chọn quy mô dữ liệu của bạn",
-    "pr.scale.small.name": "DN nhỏ", "pr.scale.small.desc": "≤ 1.000 bút toán/tháng · < 50 khách công nợ",
-    "pr.scale.medium.name": "DN vừa", "pr.scale.medium.desc": "1.000–5.000 bút toán/tháng · 50–200 khách",
-    "pr.scale.large.name": "DN lớn", "pr.scale.large.desc": "> 5.000 bút toán/tháng · 200+ khách · đa chi nhánh",
-    "pr.feat.1": "Đọc Excel/API từ MISA, FAST", "pr.feat.2": "Phân loại tự động theo Thông tư 200",
-    "pr.feat.3": "Dự báo dòng tiền 13 tuần", "pr.feat.4": "Stress-test & cảnh báo âm quỹ sớm",
-    "pr.feat.5": "Xuất báo cáo Excel/PDF", "pr.feat.6": "1 người dùng quản trị",
-    "pr.addon.title": "Mở rộng bằng AI Agent",
-    "pr.addon.desc": "Bật Agent nào, trả thêm Agent đó. Tắt bất cứ lúc nào — linh hoạt theo mùa vụ.",
-    "pr.agent.ware.name": "Agent Quản lý kho",
-    "pr.agent.ware.desc": "Giám sát tồn kho thời gian thực, tự soạn đơn đặt hàng & tối ưu tuyến vận chuyển.",
-    "pr.agent.ware.value": "Giảm tồn kho ứ đọng & tránh hết hàng",
-    "pr.agent.ware.f1": "Theo dõi tồn kho từng SKU theo thời gian thực",
-    "pr.agent.ware.f2": "Cảnh báo sớm khi chạm ngưỡng đặt lại",
-    "pr.agent.ware.f3": "Dự báo nhu cầu & ngày cạn hàng",
-    "pr.agent.ware.f4": "Tự soạn đơn đặt hàng (PO) gửi nhà cung ứng",
-    "pr.agent.ware.f5": "Chấm điểm & chọn NCC tối ưu (giá · lead time · độ tin cậy)",
-    "pr.agent.credit.name": "Agent Chấm điểm tín dụng",
-    "pr.agent.credit.desc": "Xếp hạng rủi ro công nợ từng khách hàng, cảnh báo nợ xấu trước khi quá muộn.",
-    "pr.agent.credit.value": "Giảm nợ khó đòi",
-    "pr.agent.credit.f1": "Chấm điểm tín dụng từng khách hàng công nợ",
-    "pr.agent.credit.f2": "Xác suất thu hồi dựa trên lịch sử thanh toán",
-    "pr.agent.credit.f3": "Cảnh báo sớm khách có nguy cơ thành nợ xấu",
-    "pr.agent.credit.f4": "Đề xuất hạn mức công nợ an toàn",
-    "pr.agent.credit.f5": "Phân loại khách theo mức độ ưu tiên thu hồi",
-    "pr.agent.logi.name": "Agent Tối ưu vận tải",
-    "pr.agent.logi.desc": "Gom chuyến, chọn tuyến đường & nhà xe rẻ nhất theo thời gian thực.",
-    "pr.agent.logi.value": "Tiết kiệm chi phí logistics",
-    "pr.agent.logi.f1": "So sánh nhiều phương án tuyến đường",
-    "pr.agent.logi.f2": "Gom đơn chung chuyến để giảm chi phí",
-    "pr.agent.logi.f3": "Tính toán chi phí · thời gian · quãng đường",
-    "pr.agent.logi.f4": "Đề xuất nhà vận chuyển tối ưu",
-    "pr.agent.logi.f5": "Theo dõi tiến độ giao hàng",
-    "pr.agent.collect.name": "Agent Nhắc nợ tự động",
-    "pr.agent.collect.desc": "Tự soạn email/Zalo/SMS đòi nợ theo mức độ khẩn và lên lịch gọi điện.",
-    "pr.agent.collect.value": "Thu hồi công nợ nhanh hơn",
-    "pr.agent.collect.f1": "Tự soạn nội dung nhắc nợ theo từng khách",
-    "pr.agent.collect.f2": "Gửi qua email · Zalo · SMS",
-    "pr.agent.collect.f3": "Lịch nhắc nợ tự động theo mức độ khẩn",
-    "pr.agent.collect.f4": "Leo thang nhắc nhở khi quá hạn kéo dài",
-    "pr.agent.collect.f5": "Lên lịch & nhắc cuộc gọi đòi nợ",
-    "pr.profit.label": "Tuỳ chọn chia sẻ lợi nhuận:",
-    "pr.profit.body": "với Agent vận hành, có thể thay phí cố định bằng",
-    "pr.profit.bold": "% chi phí kho bãi/logistics mà AI giúp tiết kiệm",
-    "pr.profit.end": "— bạn chỉ trả khi thấy hiệu quả thật.",
-    "pr.your.plan": "Gói của bạn",
-    "pr.billing.monthly": "Theo tháng", "pr.billing.annual": "Theo năm · −15%",
-    "pr.line.base": "Gói Khởi động (FP&A)",
-    "pr.no.agents": "Chưa kích hoạt Agent nào — đang ở cửa nhỏ nhất.",
-    "pr.total.annual": "Tổng năm (đã giảm 15%)", "pr.total.monthly": "Tổng mỗi tháng",
-    "pr.approx.monthly": "≈ {v}/tháng",
-    "pr.expansion": "Mức mở rộng", "pr.agents.count": "{n}/{m} Agent",
-    "pr.cta.start": "Bắt đầu với Gói Khởi động", "pr.cta.activate": "Kích hoạt {stage}",
-    "pr.trial": "Dùng thử 14 ngày · không cần thẻ · huỷ bất cứ lúc nào",
-    "pr.footer": "Giá tham khảo cho thị trường VN · mô hình Value-based & Land-and-Expand · phí Agent có thể thay bằng cơ chế chia sẻ % chi phí tiết kiệm theo thoả thuận.",
-    "pr.stage.starter": "Khởi động", "pr.stage.growth": "Mở rộng", "pr.stage.full": "Toàn diện",
-  },
-  en: {
-    "app.tagline": "Operational Decision System",
-    "app.status": "System online",
-    "sidebar.collapse": "Collapse",
-    "user.role": "Chief Accountant · online",
-    // NAV
-    "nav.cashflow": "Cash Flow",          "nav.cashflow.desc": "Forecast · Stress-test · Collection",
-    "nav.fpa": "FP&A Automation",         "nav.fpa.desc": "ML forecast · Scenarios · Alerts",
-    "nav.ops": "Operations Agent",        "nav.ops.desc": "Inventory · Ordering · Route optimization",
-    "nav.credit": "Credit Scoring",       "nav.credit.desc": "B2B partner rating",
-    "nav.collect": "Auto Collections",    "nav.collect.desc": "Email · Zalo · SMS · call schedule",
-    "nav.invoice": "Invoice Reader",      "nav.invoice.desc": "Upload Excel/CSV · IFRS/VAS posting · into cash flow",
-    "nav.pricing": "Plans & Pricing",     "nav.pricing.desc": "Land-and-Expand",
-    // Invoice module
-    "inv.title": "Read invoices from file",
-    "inv.subtitle": "Upload invoice listing (Excel/CSV) → VAS/IFRS posting → into cash flow",
-    "inv.upload": "Upload invoice file",
-    "inv.reset": "Reset",
-    "inv.err.noRows": "No invoice rows found. Check the file has columns No. / Invoice No. / Total payment.",
-    "inv.err.read": "File read error: ",
-    "inv.empty.title": "Upload an invoice listing",
-    "inv.empty.desc": "Supports .xlsx / .xls / .csv exported from MISA meInvoice, FAST, QuickBooks or Xero. The system auto-detects the header row, maps columns (Invoice No. · Tax ID · Net · Tax rate · Total…), posts entries per accounting standard and feeds receivables into the cash-flow forecast.",
-    "inv.meta": "{n} invoices · header row {row} · {cols} columns mapped",
-    "inv.stage.ocr": "Read & parse file",        "inv.stage.ocr.d": "Detect header row, map columns",
-    "inv.stage.cls": "Journal posting",          "inv.stage.cls.d": "Generate entries per invoice",
-    "inv.stage.chk": "Reconcile & flag",         "inv.stage.chk.d": "Check totals, Tax ID, tax rate",
-    "inv.stage.cash": "Feed cash flow",          "inv.stage.cash.d": "Add receivables to 13-week forecast",
-    "inv.kpi.count": "Invoices",
-    "inv.kpi.net": "Net revenue (Acc 511)",
-    "inv.kpi.vat": "Output VAT (Acc 3331)",
-    "inv.kpi.total": "Total receivable (Acc 131)",
-    "inv.tbl.read": "Invoices read · {n} rows",
-    "inv.tbl.no": "Inv. No.", "inv.tbl.customer": "Customer", "inv.tbl.total": "Total", "inv.tbl.tax": "Tax", "inv.tbl.warn": "Flags",
-    "inv.noname": "(no name)",
-    "inv.sumrow": "Total",
-    "inv.detail.title": "Detail & posting · Inv {no}",
-    "inv.cash.title": "13-week cash flow — before & after collecting these invoices",
-    "inv.cash.merged": "Merged {n} items",
-    "inv.cash.spread": "Total receivable +{v} is spread across weeks by invoice date + ~4-week terms · unit: million.",
-    "inv.cash.minBase": "Trough — invoices uncollected",
-    "inv.cash.minRecv": "Trough — invoices collected",
-    "inv.cash.improve": "Trough improvement",
-    "inv.cash.negFrom": "Negative from Week {w}",
-    "inv.cash.noNeg": "No deficit",
-    "inv.cash.noNegAll": "No deficit across 13 weeks",
-    "inv.cash.thanksTo": "Thanks to collecting {v}",
-    "inv.cash.after": "After collecting invoices",
-    "inv.cash.before": "Uncollected (baseline)",
-    "inv.cash.running": "Running analysis to merge receivables into cash flow…",
-    "inv.chart.week": "Week",
-    "inv.tip.after": "After collecting", "inv.tip.before": "Uncollected", "inv.tip.collect": "Invoice collection",
-    "inv.footer": "Reads your uploaded Excel/CSV directly · classification per VAS (Circular 200) / IFRS · not accounting advice — have an accountant review before posting.",
-    "inv.side.no": "Dr", "inv.side.co": "Cr",
-    // Cashflow module
-    "cf.subtitle": "Forecast · Stress-test · Early warning · Collection plan",
-    "cf.exportExcel": "Export Excel", "cf.reportPDF": "PDF Report",
-    "cf.connect": "Connect software", "cf.connect.desc": "· pick data sources to feed the forecast",
-    "cf.connected": "Connected {n}/{m}", "cf.connectedNone": "No source connected",
-    "cf.notConnected": "not connected", "cf.connBtn": "Connect", "cf.connDone": "Connected",
-    "cf.stressTitle": "Stress-test scenarios", "cf.stressDesc": "— simulate cash flow under market volatility",
-    "cf.custom": "Custom", "cf.customDesc": "Drag the sliders",
-    "cf.sl.rev": "Revenue change", "cf.sl.cost": "Cost increase", "cf.sl.delay": "Collection delay", "cf.sl.haircut": "Bad-debt increase",
-    "cf.week": "Week", "cf.weeks": "weeks",
-    "cf.earlyWarn": "Early warning: {p}% chance of cash deficit within 13 weeks — {lvl}",
-    "cf.safeMsg": "1,400 simulations: expected trough {min}. The current plan withstands the \"{sc}\" scenario.",
-    "cf.riskMsg.pre": "Risk concentrates in", "cf.riskMsg.trough": "Expected trough", "cf.riskMsg.worst": "worst (P10)",
-    "cf.kpi.cash": "Current cash", "cf.kpi.cash.sub": "Opening balance · Acc 111+112",
-    "cf.kpi.pneg": "Deficit probability", "cf.kpi.pneg.sub": "Scenario: {sc}",
-    "cf.kpi.trough": "Expected cash trough", "cf.kpi.trough.sub": "Median P50 of scenarios",
-    "cf.kpi.worst": "Worst case (P10)", "cf.kpi.worst.sub": "Worst 10% level",
-    "cf.chartTitle": "13-week cash flow forecast", "cf.leg.p50": "Expected (P50)", "cf.leg.band": "80% confidence",
-    "cf.chartUnit": "Unit: million · shaded band is the P10–P90 range",
-    "cf.detect": "Early risk detection", "cf.detectSub": "chance the cash balance turns negative",
-    "cf.lvl.safe2": "Safe", "cf.lvl.watch": "Watch", "cf.lvl.warn2": "Warning", "cf.lvl.crit": "Critical",
-    "cf.weeklyRisk": "Weekly deficit risk",
-    "cf.riskWeek": "Highest-risk week", "cf.evSelected": "Expected collection (selected)",
-    "cf.opt.title": "AI-suggested optimal collection plan",
-    "cf.opt.desc1": "AI scans every customer combination to find the", "cf.opt.desc2": "fewest & easiest to collect", "cf.opt.desc3": "to push deficit risk below your chosen threshold.",
-    "cf.opt.threshold": "Acceptable risk threshold:", "cf.opt.run": "Run optimization",
-    "cf.opt.call": "Call {n} customers: {names}",
-    "cf.opt.from": "Cuts deficit probability from", "cf.opt.applied": "(meets ≤ {t}% threshold). Applied to the list below.",
-    "cf.opt.fail": "Even collecting all 6 customers, risk remains",
-    "cf.opt.failTail": "— above the ≤ {t}% threshold. Consider deferring payments to suppliers, negotiating credit limits, or arranging working capital.",
-    "cf.list.title": "Recovery-probability model & collection call list",
-    "cf.list.desc": "Probability scored by: days overdue · on-time payment history · debt size.",
-    "cf.list.scenario": "The \"{sc}\" scenario lowers recovery probability by {p}%.",
-    "cf.col.customer": "Customer", "cf.col.overdue": "Overdue", "cf.col.debt": "Debt", "cf.col.prob": "Recovery probability", "cf.col.ev": "Expected", "cf.col.collectW": "Collect wk",
-    "cf.aiSuggest": "PICK", "cf.onTime": "on-time {p}%", "cf.days": "days",
-    "cf.classTitle": "Auto classification (VAS / IFRS)",
-    "cf.classDesc": "Matches entry content to the VAS (Circular 200) / IFRS chart of accounts · 97.4% accuracy",
-    "cf.entries": "entries",
-    "cf.footer": "Demo · Monte Carlo 1,400 scenarios · Benchmarked vs Anaplan / Vena / Clockwork AI · Not financial advice — have an accountant review before deciding.",
-    // scenario presets
-    "sc.base": "Normal", "sc.base.d": "Stable market",
-    "sc.slow": "Slowdown", "sc.slow.d": "Revenue −12% · +1 week slower",
-    "sc.reces": "Recession", "sc.reces.d": "Revenue −25% · harder collection",
-    "sc.shock": "Liquidity shock", "sc.shock.d": "Revenue −40% · bad debt surges",
-    // classification names
-    "acc.511": "Sales & service revenue", "acc.131": "Accounts receivable", "acc.112": "Bank deposits",
-    "acc.331": "Accounts payable", "acc.334": "Payroll payable", "acc.642": "G&A expenses",
-    "acc.641": "Selling expenses", "acc.333": "Taxes payable",
-    "cf.tip.p50": "Expected (P50)", "cf.tip.p90": "Good (P90)", "cf.tip.p10": "Bad (P10)", "cf.tip.risk": "Deficit risk",
-    "note.rent": "Office rent", "note.vat": "VAT payment", "note.salary1": "Payroll cycle 1", "note.supplier": "Major supplier payment", "note.cit": "Corporate income tax", "note.salary2": "Payroll cycle 2", "note.salary3": "Payroll cycle 3",
-    // Report (PDF)
-    "rp.back": "Back to dashboard", "rp.tip": "Tip: in the print dialog, choose", "rp.saveAs": "\"Save as PDF\"", "rp.print": "Print / Save PDF",
-    "rp.appsub": "Cash-flow analysis & auto collection assistant",
-    "rp.title": "CASH FLOW & RISK ALERT REPORT",
-    "rp.date": "Issued:", "rp.scenario": "Scenario:", "rp.company": "Company:", "rp.period": "Analysis period:",
-    "rp.pneg": "Deficit probability",
-    "rp.cashStart": "Opening cash", "rp.trough": "Expected cash trough (P50)", "rp.riskWeek": "Highest-risk week", "rp.worst": "Worst case (P10)",
-    "rp.sec1": "Assessment & recommendations",
-    "rp.sec2": "13-week cash flow forecast (Monte Carlo, 1,400 scenarios)",
-    "rp.chartNote": "Unit: million · shaded area is the 80% confidence band (P10–P90) · solid line is expected (P50)",
-    "rp.sec3": "Receivables to collect · {n} items in plan",
-    "rp.th.customer": "Customer", "rp.th.acc": "Acc", "rp.th.debt": "Debt", "rp.th.overdue": "Overdue", "rp.th.prob": "Prob.", "rp.th.ev": "Expected", "rp.th.week": "Week", "rp.th.plan": "Plan",
-    "rp.totalRow": "Total expected collection per plan:",
-    "rp.sig.maker": "Prepared by", "rp.sig.chief": "Chief Accountant", "rp.sig.director": "Director", "rp.sig.note": "(Sign & full name)",
-    "rp.disclaimer": "Report auto-generated by LUXORA from consolidated data across MISA, ERP (SAP/Oracle), CRM (Salesforce) & banking (classified per VAS Circular 200 / IFRS). Figures are forecasts, not financial advice — have an accountant review before deciding.",
-    "rp.verdict.safe": "Under the \"{sc}\" scenario, cash is forecast safe across all 13 weeks (deficit probability {p}%). Expected cash trough reaches {min}. We recommend keeping the current collection plan and continuing weekly monitoring.",
-    "rp.verdict.risk": "Under the \"{sc}\" scenario, cash has a {p}% chance of turning negative within 13 weeks (risk level: {lvl}), concentrated in Week {w} ({range}). Expected trough {min}, worst case {worst}. We recommend prioritizing collection of {n} key receivables (expected value {ev}) ahead of the heavy-spending weeks.",
-    // FP&A module
-    "fpa.subtitle": "A financial decision system — replacing manual Excel",
-    "fpa.badge": "Operational Decision System",
-    "fpa.intro1": "Three automation layers replacing the Excel workflow:", "fpa.intro.ml": "Machine Learning forecasting", "fpa.intro.mld": "(LSTM time series + macro signals)", "fpa.intro.scen": "multi-scenario analysis", "fpa.intro.risk": "risk detection", "fpa.intro.end": "& early warning.",
-    "fpa.p1.title": "Smart cash flow forecast", "fpa.p1.badge": "LSTM model · 4.2% error",
-    "fpa.p1.desc": "LSTM time series combined with macro signals · the shaded band is the confidence interval (uncertainty grows over the horizon).",
-    "fpa.trough": "trough · Week {w}", "fpa.neg": "deficit",
-    "fpa.p2.title": "Macro signal inputs", "fpa.p2.desc": "The model auto-updates external variables and measures their impact on the forecast.",
-    "fpa.influence": "influence", "fpa.signal": "Key signal:",
-    "fpa.signalText": "raw material prices +6.5% is the strongest driver — the model auto-triggers the Stress-test scenario.",
-    "fpa.p3.title": "Automated risk detection", "fpa.scanning": "Scanning continuously",
-    "fpa.urgent": "urgent", "fpa.warns": "warnings",
-    "fpa.p3.desc1": "Auto-scans overdue receivables, abnormal costs & liquidity shortfall risk — alerting", "fpa.p3.desc2": "30–60 days ahead",
-    "fpa.footer": "Demo of the FP&A Automation pillar · simulated data & connections · LSTM model + macro variables · integrates with the operations agent & auto collections.",
-    // scenarios
-    "fpa.scen.best": "Best", "fpa.scen.base": "Normal", "fpa.scen.stress": "Crisis",
-    // macro signals
-    "fpa.macro.cpi": "Inflation (CPI)", "fpa.macro.rate": "Policy rate", "fpa.macro.fx": "USD/VND rate", "fpa.macro.mat": "Raw material prices",
-    // severity
-    "fpa.sev.high": "Urgent", "fpa.sev.medium": "Warning", "fpa.sev.low": "Watch",
-    // alerts
-    "fpa.al.a1.t": "Severe overdue receivable", "fpa.al.a1.d": "Minh Phat Co. — 320M overdue 45 days, exceeding credit limit. Risk of becoming bad debt.", "fpa.al.a1.e": "Act now",
-    "fpa.al.a2.t": "Liquidity shortfall risk", "fpa.al.a2.d": "The model forecasts cash hitting a trough below the safety threshold in Week 6 due to clustered payroll + tax + supplier payments.", "fpa.al.a2.m": "~48 days out", "fpa.al.a2.e": "48-day early warning",
-    "fpa.al.a3.t": "Abnormal cost", "fpa.al.a3.d": "Logistics cost this month +38% vs the 6-month average — abnormally high, review shipping contracts.", "fpa.al.a3.e": "Detected today",
-    "fpa.al.a4.t": "Cluster of receivables nearing due", "fpa.al.a4.d": "4 customers (215M total) will become overdue within 7–14 days. Proactively send reminders.", "fpa.al.a4.e": "Within 14 days",
-    "fpa.tip.ci": "Confidence interval",
-    // Ops agent module
-    "ops.title": "Operations Agent ↔ Cash Flow", "ops.subtitle1": "Every purchase order self-checks: enough stock", "ops.subtitle.and": "and", "ops.subtitle2": "enough cash?",
-    "ops.auto": "Autonomous", "ops.paused": "Paused", "ops.weekN": "Week {n}", "ops.weekShort": "W",
-    "ops.fastForward": "Fast-forward 1 week", "ops.runAuto": "Run autonomous", "ops.stop": "Stop", "ops.reset": "Reset",
-    "ops.mini.atRisk": "SKUs below threshold", "ops.mini.trough": "Forecast cash trough", "ops.mini.po": "Approved POs",
-    "ops.chart.title": "13-week cash flow forecast", "ops.lg.now": "Current", "ops.lg.full": "If ordered in full", "ops.lg.balanced": "After balancing",
-    "ops.chart.unit": "Unit: million · red dashed line = impact if the full order is placed now.",
-    "ops.inv.title": "Inventory monitor", "ops.demand": "demand +{p}%", "ops.daysLeft": "~{d} days left",
-    "ops.decision": "Agent decision", "ops.running": "RUNNING",
-    "ops.idle1": "The agent is monitoring. Press", "ops.idle.btn": "\"Fast-forward 1 week\"", "ops.idle2": "to simulate sales. When a SKU hits its threshold, the agent drafts an order then", "ops.idle.cash": "checks the cash-flow impact", "ops.idle3": "right here.",
-    "ops.poSuggest": "Suggested PO", "ops.poFrom": "{qty} units from {sup} · arrives in ~{lead} days",
-    "ops.safe": "Enough stock & enough cash", "ops.conflict": "Conflict: ordering in full runs short on cash!",
-    "ops.safeText": "Ordering in full still keeps the cash trough at {min} (above the {floor}M safety floor).",
-    "ops.conflictText1": "Ordering in full now drags the cash trough down to", "ops.conflictNeg": "(NEGATIVE from Week {w})", "ops.conflictText2": ". The agent suggests a balancing option:",
-    "ops.aiPick": "AI PICK", "ops.trough": "cash trough",
-    "ops.approve": "Approve option", "ops.reject": "Reject",
-    "ops.logTitle": "Activity log", "ops.footer": "Demo · the operations agent syncs directly with the cash-flow model · safety floor {floor}M · not financial advice.",
-    // step labels
-    "ops.step.detect": "Detect inventory below threshold", "ops.step.po": "Draft optimal purchase order", "ops.step.cash": "Feed PO into the 13-week cash forecast", "ops.step.balance": "Balance: enough stock ↔ enough cash", "ops.step.await": "Await approval",
-    // strategy labels
-    "ops.strat.full": "Order in full, pay on terms", "ops.strat.delay": "Defer payment to Week {w}", "ops.strat.split": "Split order: order {q1}/{qty} units first", "ops.strat.splitNote": "Order the remaining {rest} units in 3 weeks", "ops.strat.negotiate": "Switch to {w}-week-terms supplier (Tan A)",
-    // tooltip
-    "ops.tip.bal": "Current balance", "ops.tip.full": "If ordered in full", "ops.tip.balanced": "After balancing", "ops.tip.poOut": "PO outflow",
-    // log messages
-    "ops.log.boot": "Agent started · monitoring inventory & syncing cash flow in real time.",
-    "ops.log.reset": "Simulation reset.",
-    "ops.log.arrive": "Goods received: +{qty} {sku}.",
-    "ops.log.start": "⚡ {sku} hit threshold (stock {stock} ≤ {reorder}), demand +{p}%. Starting analysis.",
-    "ops.log.s0": "{name}: ~{d} days until depletion.",
-    "ops.log.s1": "Draft PO: {qty} units from {sup}, value {cost}.",
-    "ops.log.s2safe": "Feed PO into forecast → cash trough stays safe.",
-    "ops.log.s2risk": "Feed PO into forecast → cash trough drops to {min}{neg}.",
-    "ops.log.s2neg": ", NEGATIVE from Week {w}",
-    "ops.log.s3safe": "Enough stock & enough cash → keep the full order.",
-    "ops.log.s3conflict": "Stock ↔ cash conflict! Chose \"{label}\" → lifts the cash trough to {min}.",
-    "ops.log.approve": "✓ Approved {id} ({label}). Pay {cost} in Week {payW}, goods arrive Week {arrW}.",
-    "ops.log.reject": "✕ Rejected the suggestion for {sku}.",
-    // SKU names
-    "ops.sku.A12": "Wheat flour No.11 (25kg bag)", "ops.sku.C33": "Packaging cartons (case)", "ops.sku.E20": "Refined sugar (50kg bag)", "ops.sku.D51": "Dry yeast (10kg box)",
-    // DebtCollect module
-    "col.title": "Auto Collections",
-    "col.subtitle": "AI drafts & schedules collection reminders by urgency · multi-channel",
-    "col.badge": "AI drafts per debtor",
-    "col.list.title": "Collection list",
-    "col.foreign": "Foreign business",
-    "col.overdue": "overdue {d} days",
-    "col.list.footer": "Bar = recovery probability · priority: most overdue & highest value first.",
-    "col.tone": "Tone: {label}",
-    "col.tier.urgent": "Urgent", "col.tier.firm": "Firm", "col.tier.gentle": "Gentle",
-    "col.ai.drafted": "AI drafted", "col.ai.note": "sample content, edit before sending",
-    "col.subject": "Subject: ",
-    "col.sent": "Sent via {ch}", "col.send": "Send reminder via {ch}",
-    "col.schedule.btn": "Auto-schedule",
-    "col.sched.title": "Reminder & escalation schedule",
-    "col.sched.d1": "Today",      "col.sched.act1": "Send 1st reminder (Email + Zalo)",
-    "col.sched.d2": "+3 days",    "col.sched.act2": "If unpaid → 2nd reminder (SMS)",
-    "col.sched.d3": "+7 days",    "col.sched.act3": "Escalate → direct phone call",
-    "col.sched.d4": "+14 days",   "col.sched.act4": "Transfer to collections team",
-    "col.footer": "Demo · AI drafts collection messages by urgency · multi-channel Email/Zalo/SMS · auto-schedule & escalation · not legal advice.",
-    // CreditScore module
-    "cr.title": "Credit Scoring Agent",
-    "cr.subtitle": "Score B2B partners & recommend safe credit limits",
-    "cr.badge": "Operations Agent Module",
-    "cr.partners": "B2B Partners",
-    "cr.datasources": "Data sources: financial reports · payment history · industry data — auto-aggregated & scored.",
-    "cr.ind.food": "Food manufacturing", "cr.ind.construction": "Construction", "cr.ind.retail": "Retail", "cr.ind.logistics": "Logistics",
-    "cr.revFmt": "{n}B/yr",
-    "cr.rev": "revenue {rev}", "cr.req": "requests {r}M limit",
-    "cr.scoring": "Scoring…", "cr.rescore": "Re-score", "cr.score.btn": "Score",
-    "cr.idle.hint": "Click Score to let AI analyze the partner's financial reports, payment history, and industry data.",
-    "cr.analyzing": "Analyzing factors…",
-    "cr.transparent": "Transparent analysis — why this score",
-    "cr.weight": "weight {w}%",
-    "cr.f.liquidity": "Liquidity", "cr.f.leverage": "Leverage & debt",
-    "cr.f.payment": "Payment history", "cr.f.industry": "Industry health", "cr.f.size": "Size & tenure",
-    "cr.src.financial": "Financial reports", "cr.src.transactions": "Transaction data",
-    "cr.src.industry": "Industry data", "cr.src.profile": "Business profile",
-    "cr.grade.AA": "Very low risk", "cr.grade.A": "Low risk", "cr.grade.BBB": "Medium risk",
-    "cr.grade.BB": "High risk", "cr.grade.B": "Very high risk",
-    "cr.grade.badge": "Grade {g} · {label}",
-    "cr.limit.title": "Recommended safe credit limit",
-    "cr.limit.requested": "Partner requests", "cr.limit.approved": "AI approved", "cr.limit.ratio": "Approval rate",
-    "cr.limit.good": "Strong profile (grade {g}) — can approve the full {req}M limit requested, with periodic monitoring.",
-    "cr.limit.reduced": "At grade {g} ({label}), AI recommends {safe}M instead of {req}M to control bad-debt risk. Weakest factor: {weak}.",
-    "cr.apply": "Apply limit", "cr.schedule": "Schedule review",
-    "cr.score.unit": "/ 100 pts",
-    "cr.footer": "Demo · transparent weighted scoring model · simulated data · integrates with the operations agent & cash-flow forecast · not credit advice.",
-    "cr.weak.liquidity": "weak liquidity", "cr.weak.leverage": "high leverage",
-    "cr.weak.payment": "poor payment history", "cr.weak.industry": "volatile industry", "cr.weak.size": "small size",
-    // PricingPlans module
-    "pr.badge": "Pricing by Data Scale & Value Delivered",
-    "pr.headline": "Start small. Scale when you need to.",
-    "pr.intro.start": "Start with the", "pr.intro.base": "Starter Plan", "pr.intro.mid": "for cash-flow forecasting only. When your business needs more, activate each",
-    "pr.intro.agent": "AI Agent", "pr.intro.end": "— pay only for the value you expand into.",
-    "pr.base.name": "Starter Plan", "pr.base.tag": "FOUNDATION · REQUIRED",
-    "pr.base.desc": "FP&A Only — for CEOs/CFOs managing cash flow.",
-    "pr.month": "/month",
-    "pr.scale.title": "Choose your data scale",
-    "pr.scale.small.name": "Small Business", "pr.scale.small.desc": "≤ 1,000 entries/month · < 50 debtors",
-    "pr.scale.medium.name": "Mid-size", "pr.scale.medium.desc": "1,000–5,000 entries/month · 50–200 debtors",
-    "pr.scale.large.name": "Large Business", "pr.scale.large.desc": "> 5,000 entries/month · 200+ debtors · multi-branch",
-    "pr.feat.1": "Read Excel/API from MISA, FAST", "pr.feat.2": "Auto-classify per VAS Circular 200",
-    "pr.feat.3": "13-week cash flow forecast", "pr.feat.4": "Stress-test & early deficit alert",
-    "pr.feat.5": "Export Excel/PDF reports", "pr.feat.6": "1 admin user",
-    "pr.addon.title": "Expand with AI Agents",
-    "pr.addon.desc": "Activate what you need, pay for what you use. Cancel anytime — flexible for seasonal demand.",
-    "pr.agent.ware.name": "Inventory Management Agent",
-    "pr.agent.ware.desc": "Real-time inventory monitoring, auto-draft purchase orders & optimize delivery routes.",
-    "pr.agent.ware.value": "Reduce dead stock & prevent stockouts",
-    "pr.agent.ware.f1": "Track each SKU's stock in real time",
-    "pr.agent.ware.f2": "Early alert when reorder point is hit",
-    "pr.agent.ware.f3": "Forecast demand & depletion date",
-    "pr.agent.ware.f4": "Auto-draft purchase orders (PO) to suppliers",
-    "pr.agent.ware.f5": "Score & pick the best supplier (price · lead time · reliability)",
-    "pr.agent.credit.name": "Credit Scoring Agent",
-    "pr.agent.credit.desc": "Rank each customer's credit risk, alert on bad debt before it's too late.",
-    "pr.agent.credit.value": "Reduce bad debt",
-    "pr.agent.credit.f1": "Score each debtor's creditworthiness",
-    "pr.agent.credit.f2": "Recovery probability based on payment history",
-    "pr.agent.credit.f3": "Early alert for customers at risk of bad debt",
-    "pr.agent.credit.f4": "Recommend safe credit limits",
-    "pr.agent.credit.f5": "Prioritize customers by collection urgency",
-    "pr.agent.logi.name": "Logistics Optimization Agent",
-    "pr.agent.logi.desc": "Consolidate shipments, pick the cheapest route & carrier in real time.",
-    "pr.agent.logi.value": "Save on logistics costs",
-    "pr.agent.logi.f1": "Compare multiple route options",
-    "pr.agent.logi.f2": "Consolidate orders to cut freight costs",
-    "pr.agent.logi.f3": "Calculate cost · transit time · distance",
-    "pr.agent.logi.f4": "Recommend the optimal carrier",
-    "pr.agent.logi.f5": "Track delivery progress",
-    "pr.agent.collect.name": "Auto Collection Agent",
-    "pr.agent.collect.desc": "Auto-draft email/Zalo/SMS reminders by urgency and schedule calls.",
-    "pr.agent.collect.value": "Faster debt recovery",
-    "pr.agent.collect.f1": "Auto-draft reminders tailored to each debtor",
-    "pr.agent.collect.f2": "Send via email · Zalo · SMS",
-    "pr.agent.collect.f3": "Auto-schedule reminders by urgency",
-    "pr.agent.collect.f4": "Escalate when overdue persists",
-    "pr.agent.collect.f5": "Schedule & remind collection calls",
-    "pr.profit.label": "Profit-share option:",
-    "pr.profit.body": "for the operations agent, replace the fixed fee with a",
-    "pr.profit.bold": "% of the warehousing/logistics costs AI saves",
-    "pr.profit.end": "— you only pay when you see real results.",
-    "pr.your.plan": "Your Plan",
-    "pr.billing.monthly": "Monthly", "pr.billing.annual": "Annual · −15%",
-    "pr.line.base": "Starter Plan (FP&A)",
-    "pr.no.agents": "No agents activated — starting at the smallest tier.",
-    "pr.total.annual": "Annual total (15% off)", "pr.total.monthly": "Monthly total",
-    "pr.approx.monthly": "≈ {v}/month",
-    "pr.expansion": "Expansion", "pr.agents.count": "{n}/{m} Agents",
-    "pr.cta.start": "Start with Starter Plan", "pr.cta.activate": "Activate {stage}",
-    "pr.trial": "14-day trial · no card required · cancel anytime",
-    "pr.footer": "Reference pricing for VN market · Value-based & Land-and-Expand model · Agent fee can be replaced by a % of savings, per agreement.",
-    "pr.stage.starter": "Starter", "pr.stage.growth": "Growth", "pr.stage.full": "Full Suite",
-  },
-};
-const LangContext = React.createContext({ lang: "vi", setLang: () => {}, t: (k) => k });
-function useT() { return React.useContext(LangContext); }
+function useT() { return useTranslation(); }
 
 const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
@@ -3169,21 +2568,17 @@ const NAV = [
 ];
 
 export default function App() {
-  const [lang, setLang] = useState("vi");
-  const t = React.useCallback((k, vars) => {
-    let s = (I18N[lang] && I18N[lang][k]) || (I18N.vi[k]) || k;
-    if (vars) for (const key in vars) s = s.split("{" + key + "}").join(vars[key]);
-    return s;
-  }, [lang]);
   return (
-    <LangContext.Provider value={{ lang, setLang, t }}>
+    <I18nextProvider i18n={i18n}>
       <AppShell />
-    </LangContext.Provider>
+    </I18nextProvider>
   );
 }
 
 function AppShell() {
-  const { t, lang, setLang } = useT();
+  const { t, i18n: i18nInst } = useT();
+  const lang = i18nInst.language;
+  const setLang = setLanguage;
   const [page, setPage] = useState("cashflow");
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
@@ -3191,9 +2586,9 @@ function AppShell() {
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getUser().then(({ data }) => setMe(data.user)).catch(() => {});
+    supabase.auth.getUser().then(({ data }) => { setMe(data.user); applyUserLanguage(data.user); }).catch(() => {});
   }, []);
-  const displayName = (me && (me.user_metadata?.display_name || (me.email || "").split("@")[0])) || "Người dùng";
+  const displayName = (me && (me.user_metadata?.display_name || (me.email || "").split("@")[0])) || t("user.fallback");
   const initials = displayName.trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(-2).join("").toUpperCase() || "ND";
 
   useEffect(() => {
@@ -3244,14 +2639,14 @@ function AppShell() {
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: C.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
             </div>
-            <button onClick={() => setUserMenu((v) => !v)} title="Tùy chọn" style={{ flex: "0 0 auto", width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", background: userMenu ? "rgba(255,255,255,.08)" : "transparent", border: "none", color: C.sub, cursor: "pointer", fontSize: 16, fontWeight: 800, letterSpacing: 1 }}>⋯</button>
+            <button onClick={() => setUserMenu((v) => !v)} title={t("user.options")} style={{ flex: "0 0 auto", width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", background: userMenu ? "rgba(255,255,255,.08)" : "transparent", border: "none", color: C.sub, cursor: "pointer", fontSize: 16, fontWeight: 800, letterSpacing: 1 }}>⋯</button>
           </>}
           {userMenu && (
             <div style={{ position: "absolute", top: "calc(100% - 4px)", left: collapsed ? 8 : 14, right: collapsed ? "auto" : 14, zIndex: 999, background: "#111E33", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, boxShadow: "0 10px 30px rgba(0,0,0,.5)", minWidth: 180 }}>
               {me && <div style={{ fontSize: 11, color: C.sub, padding: "6px 10px 8px", borderBottom: `1px solid ${C.line}`, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me.email}</div>}
               <button onClick={() => supabase && supabase.auth.signOut()} style={{ width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: "#F26D6D", background: "transparent", fontFamily: "inherit" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(242,109,109,.12)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                Đăng xuất
+                {t("user.signout")}
               </button>
             </div>
           )}
