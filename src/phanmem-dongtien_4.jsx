@@ -8,9 +8,6 @@ import { useTranslation, I18nextProvider } from "react-i18next";
 import i18n, { setLanguage, applyUserLanguage } from "./i18n";
 import { saveInvoiceUpload, loadLatestInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
-import { useCompany } from "./CompanyContext";
-import { fmtMoney, fmtMoneyM, fmtMoneyCompactM } from "./lib/money";
-import CompanySettingsModal from "./CompanySettingsModal";
 import {
   AlertTriangle, Wallet, Phone, FileSpreadsheet, CheckCircle2, Sparkles,
   ShieldCheck, ShieldAlert, TrendingDown, Tag, Activity, Zap, Wand2,
@@ -85,25 +82,14 @@ const PRESETS = [
   { key: "shock", name: "Sốc thanh khoản", desc: "DT −40% · nợ khó đòi tăng mạnh", rev: -0.40, cost: 0.08, delay: 3, haircut: 0.35, revSd: 0.20 },
 ];
 const CLASSIFICATION = [
-  { code: "511", key: "acc.511", count: 312, total: 2180, kind: "in" },
-  { code: "131", key: "acc.131", count: 148, total: 950,  kind: "in" },
-  { code: "112", key: "acc.112", count: 274, total: 0,    kind: "neutral" },
-  { code: "331", key: "acc.331", count: 196, total: 1340, kind: "out" },
-  { code: "334", key: "acc.334", count: 64,  total: 660,  kind: "out" },
-  { code: "642", key: "acc.642", count: 121, total: 410,  kind: "out" },
-  { code: "641", key: "acc.641", count: 88,  total: 295,  kind: "out" },
-  { code: "333", key: "acc.333", count: 44,  total: 175,  kind: "out" },
-];
-/* Cùng số liệu, mã tài khoản/nhãn theo IFRS — dùng cho công ty accountingStandard === "IFRS" */
-const CLASSIFICATION_IFRS = [
-  { code: "4000", key: "ifrs.revenue",    count: 312, total: 2180, kind: "in" },
-  { code: "1200", key: "ifrs.ar",         count: 148, total: 950,  kind: "in" },
-  { code: "1000", key: "ifrs.cash",       count: 274, total: 0,    kind: "neutral" },
-  { code: "2000", key: "ifrs.ap",         count: 196, total: 1340, kind: "out" },
-  { code: "2100", key: "ifrs.payroll",    count: 64,  total: 660,  kind: "out" },
-  { code: "6200", key: "ifrs.ga",         count: 121, total: 410,  kind: "out" },
-  { code: "6100", key: "ifrs.selling",    count: 88,  total: 295,  kind: "out" },
-  { code: "2200", key: "ifrs.taxpayable", count: 44,  total: 175,  kind: "out" },
+  { code: "511", name: "Doanh thu bán hàng & CCDV", count: 312, total: 2180, kind: "in" },
+  { code: "131", name: "Phải thu của khách hàng",   count: 148, total: 950,  kind: "in" },
+  { code: "112", name: "Tiền gửi ngân hàng",        count: 274, total: 0,    kind: "neutral" },
+  { code: "331", name: "Phải trả cho người bán",    count: 196, total: 1340, kind: "out" },
+  { code: "334", name: "Phải trả người lao động",   count: 64,  total: 660,  kind: "out" },
+  { code: "642", name: "Chi phí quản lý DN",        count: 121, total: 410,  kind: "out" },
+  { code: "641", name: "Chi phí bán hàng",          count: 88,  total: 295,  kind: "out" },
+  { code: "333", name: "Thuế & phải nộp NN",        count: 44,  total: 175,  kind: "out" },
 ];
 
 /* ---------- helpers ---------- */
@@ -177,11 +163,6 @@ const heat = (s, pal) => (s < 0.05 ? pal.green : s < 0.25 ? pal.gold : s < 0.5 ?
 function CashflowDashboard() {
   const { t, i18n: i18nInst } = useT();
   const lang = i18nInst.language;
-  const { company } = useCompany();
-  const currency = company?.currency || "VND";
-  const standard = company?.accountingStandard || "VAS";
-  const fmtVnd = (m) => fmtMoneyM(m, currency);
-  const classification = standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
   const [scKey, setScKey] = useState("base");
   const [custom, setCustom] = useState({ rev: -0.20, cost: 0.05, delay: 2, haircut: 0.20 });
@@ -389,7 +370,7 @@ function CashflowDashboard() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Tag size={17} color={C.cyan} /><h3 style={h3}>{t("cf.classTitle")}</h3></div>
           <div style={{ fontSize: 12.5, color: C.sub, margin: "4px 0 14px" }}>{t("cf.classDesc")}</div>
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill,minmax(232px,1fr))" }}>
-            {classification.map((c) => { const col = c.kind === "in" ? C.green : c.kind === "out" ? C.red : C.cyan; return (<div key={c.code} style={{ padding: "12px 13px", borderRadius: 12, background: C.panel2, border: `1px solid ${C.line}` }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}><span className="tnum" style={{ fontWeight: 800, fontSize: 14, color: col }}>{c.code}</span><span style={{ width: 6, height: 6, borderRadius: 9, background: col }} /><span style={{ fontSize: 11.6, fontWeight: 600 }}>{t(c.key)}</span></div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}><span className="tnum" style={{ fontSize: 11.5, color: C.sub }}>{c.count} {t("cf.entries")}</span>{c.total > 0 && <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{fmtVnd(c.total)}</span>}</div></div>); })}
+            {CLASSIFICATION.map((c) => { const col = c.kind === "in" ? C.green : c.kind === "out" ? C.red : C.cyan; return (<div key={c.code} style={{ padding: "12px 13px", borderRadius: 12, background: C.panel2, border: `1px solid ${C.line}` }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}><span className="tnum" style={{ fontWeight: 800, fontSize: 14, color: col }}>{c.code}</span><span style={{ width: 6, height: 6, borderRadius: 9, background: col }} /><span style={{ fontSize: 11.6, fontWeight: 600 }}>{t("acc." + c.code)}</span></div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}><span className="tnum" style={{ fontSize: 11.5, color: C.sub }}>{c.count} {t("cf.entries")}</span>{c.total > 0 && <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{c.total} tr</span>}</div></div>); })}
           </div>
         </section>
 
@@ -402,8 +383,6 @@ function CashflowDashboard() {
 /* ================= REPORT (white, print-ready A4) ================= */
 function Report({ sim, sc, selected, totalEV, onClose }) {
   const { t } = useT();
-  const { company } = useCompany();
-  const fmtVnd = (m) => fmtMoneyM(m, company?.currency || "VND");
   const rk = riskLevel(sim.pNeg, L);
   const sel = RECV.filter((r) => selected.has(r.id));
   const yMin = Math.min(0, ...sim.data.map((d) => d.p10)); const yMax = Math.max(START_CASH, ...sim.data.map((d) => d.p90));
@@ -546,7 +525,7 @@ function Slider({ label, val, min, max, step, fmt, onChange, c }) { return (<div
 function Kpi({ label, sub, value, accent, icon }) { return (<div className="card" style={{ ...panel, padding: "15px 16px" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 9 }}><span style={{ fontSize: 12.3, color: C.sub, fontWeight: 600 }}>{label}</span><span style={{ color: accent }}>{icon}</span></div><div className="tnum" style={{ fontSize: 21, fontWeight: 800, color: accent, letterSpacing: "-0.02em" }}>{value}</div><div style={{ fontSize: 11.3, color: C.sub, marginTop: 4 }}>{sub}</div></div>); }
 function Stat({ label, value, c }) { return (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderTop: `1px solid ${C.line}` }}><span style={{ fontSize: 12, color: C.sub }}>{label}</span><span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: c }}>{value}</span></div>); }
 function Legend({ swatch, label, band }) { return <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 16, height: band ? 10 : 0, borderRadius: band ? 3 : 0, background: band ? `${swatch}44` : "none", borderTop: band ? "none" : `3px solid ${swatch}` }} />{label}</span>; }
-function TipBox({ active, payload }) { const { t } = useT(); const { company } = useCompany(); const fmtVnd = (m) => fmtMoneyM(m, company?.currency || "VND"); if (!active || !payload || !payload.length) return null; const d = payload[0].payload; return (<div style={{ background: "#0A0F1C", border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 13px", fontFamily: UI, boxShadow: "0 14px 30px rgba(0,0,0,.5)", minWidth: 190 }}><div style={{ fontWeight: 800, fontSize: 13 }}>{t("cf.week")} {d.idx + 1} <span style={{ color: C.sub, fontWeight: 500 }}>· {d.range}</span></div><Row k={t("cf.tip.p50")} v={fmtVnd(d.p50)} c={d.p50 < 0 ? C.red : C.gold} /><Row k={t("cf.tip.p90")} v={fmtVnd(d.p90)} c={C.green} /><Row k={t("cf.tip.p10")} v={fmtVnd(d.p10)} c={d.p10 < 0 ? C.red : C.sub} /><div style={{ height: 1, background: C.line, margin: "7px 0" }} /><Row k={t("cf.tip.risk")} v={`${Math.round(d.negShare * 100)}%`} c={heat(d.negShare, C)} />{OUT_NOTES[d.idx] && <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>★ {t(OUT_NOTES[d.idx])}</div>}</div>); }
+function TipBox({ active, payload }) { const { t } = useT(); if (!active || !payload || !payload.length) return null; const d = payload[0].payload; return (<div style={{ background: "#0A0F1C", border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 13px", fontFamily: UI, boxShadow: "0 14px 30px rgba(0,0,0,.5)", minWidth: 190 }}><div style={{ fontWeight: 800, fontSize: 13 }}>{t("cf.week")} {d.idx + 1} <span style={{ color: C.sub, fontWeight: 500 }}>· {d.range}</span></div><Row k={t("cf.tip.p50")} v={fmtVnd(d.p50)} c={d.p50 < 0 ? C.red : C.gold} /><Row k={t("cf.tip.p90")} v={fmtVnd(d.p90)} c={C.green} /><Row k={t("cf.tip.p10")} v={fmtVnd(d.p10)} c={d.p10 < 0 ? C.red : C.sub} /><div style={{ height: 1, background: C.line, margin: "7px 0" }} /><Row k={t("cf.tip.risk")} v={`${Math.round(d.negShare * 100)}%`} c={heat(d.negShare, C)} />{OUT_NOTES[d.idx] && <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>★ {t(OUT_NOTES[d.idx])}</div>}</div>); }
 function Row({ k, v, c }) { return <div style={{ display: "flex", justifyContent: "space-between", gap: 18, fontSize: 12, marginTop: 5 }}><span style={{ color: C.sub }}>{k}</span><span className="tnum" style={{ color: c, fontWeight: 700 }}>{v}</span></div>; }
 
 /* ================= FP&A AUTOMATION MODULE (embedded) ================= */
@@ -2244,26 +2223,13 @@ function classify_INV(ln) {
   if (ln.vat > 0) e.push({ acc: "3331", side: "Có", nameKey: "inv.entry.vatOut", nameVars: { rate: ln.vatRate || 0 }, amount: ln.vat, c: C_INV.violet });
   return e;
 }
-/* Cùng bút toán, mã tài khoản/nhãn theo IFRS — dùng cho công ty accountingStandard === "IFRS" */
-function classifyIFRS_INV(ln) {
-  const e = [];
-  e.push({ acc: "1200", side: "Nợ", nameKey: "inv.entry.receivable.ifrs", nameVars: { buyer: ln.buyer ? " · " + ln.buyer : "" }, amount: ln.total, c: C_INV.green });
-  if (ln.ck > 0) e.push({ acc: "4100", side: "Nợ", nameKey: "inv.entry.discount", amount: ln.ck, c: C_INV.orange });
-  e.push({ acc: "4000", side: "Có", nameKey: "inv.entry.revenue", amount: ln.net, c: C_INV.cyan });
-  if (ln.vat > 0) e.push({ acc: "2300", side: "Có", nameKey: "inv.entry.vatOut.ifrs", nameVars: { rate: ln.vatRate || 0 }, amount: ln.vat, c: C_INV.violet });
-  return e;
-}
-/* anomaly checks per line — standard: "VAS" | "IFRS" (mã số thuế VN có định dạng riêng, không áp cho công ty nước ngoài) */
-function checkLine_INV(ln, standard = "VAS") {
+/* anomaly checks per line */
+function checkLine_INV(ln) {
   const out = [];
   const calcNet = Math.round(ln.amount - ln.ck);
   const calcTotal = Math.round(ln.net + ln.vat);
   out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, labelKey: "inv.check.totalMatch", v: `${calcTotal.toLocaleString("vi-VN")} ≈ ${Math.round(ln.total).toLocaleString("vi-VN")}` });
-  if (standard === "IFRS") {
-    out.push({ ok: !!ln.buyerTax, labelKey: "inv.check.taxIdProvided", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
-  } else {
-    out.push({ ok: /^\d{10}(-\d{3})?$/.test(ln.buyerTax), labelKey: "inv.check.taxIdValid", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
-  }
+  out.push({ ok: /^\d{10}(-\d{3})?$/.test(ln.buyerTax), labelKey: "inv.check.taxIdValid", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
   out.push({ ok: ln.vatRate > 0, labelKey: "inv.check.hasVatRate", v: ln.vatRate ? ln.vatRate + "%" : "", vKey: ln.vatRate ? null : "inv.check.empty" });
   return out;
 }
@@ -2316,11 +2282,6 @@ const STAGES_INV = [
 
 function InvoiceProcess_INV() {
   const { t } = useT();
-  const { company } = useCompany();
-  const currency = company?.currency || "VND";
-  const standard = company?.accountingStandard || "VAS";
-  const fmtVnd_INV = (n) => fmtMoney(n, currency);
-  const fmtTr_INV = (n) => fmtMoneyCompactM(n, currency);
   const [lines, setLines] = useState(null);
   const [meta, setMeta] = useState({ name: "", headerRow: -1, cols: 0, mapped: 0 });
   const [stage, setStage] = useState(-1);
@@ -2386,7 +2347,7 @@ function InvoiceProcess_INV() {
   const totals = lines ? lines.reduce((a, l) => ({ net: a.net + l.net, vat: a.vat + l.vat, total: a.total + l.total, ck: a.ck + l.ck }), { net: 0, vat: 0, total: 0, ck: 0 }) : null;
   const cf = (lines && done("chk")) ? buildCashflow_INV(lines, 2020, 8) : null;
   const cur = lines ? lines[Math.min(sel, lines.length - 1)] : null;
-  const warnCount = lines ? lines.reduce((a, l) => a + checkLine_INV(l, standard).filter((c) => !c.ok).length, 0) : 0;
+  const warnCount = lines ? lines.reduce((a, l) => a + checkLine_INV(l).filter((c) => !c.ok).length, 0) : 0;
 
   return (
     <div style={{ fontFamily: UI_INV, color: C_INV.txt }}>
@@ -2474,7 +2435,7 @@ function InvoiceProcess_INV() {
                   <div style={{ display: "grid", gridTemplateColumns: "30px 70px minmax(0,1.6fr) 84px 90px 70px", gap: 8, padding: "0 10px 7px", fontSize: 10.5, color: C_INV.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em" }}>
                     <span>#</span><span>{t("inv.tbl.no")}</span><span>{t("inv.tbl.customer")}</span><span style={{ textAlign: "right" }}>{t("inv.tbl.total")}</span><span style={{ textAlign: "right" }}>{t("inv.tbl.tax")}</span><span style={{ textAlign: "center" }}>{t("inv.tbl.warn")}</span>
                   </div>
-                  {lines.map((ln, i) => { const warns = checkLine_INV(ln, standard).filter((c) => !c.ok).length; const on = i === sel; return (
+                  {lines.map((ln, i) => { const warns = checkLine_INV(ln).filter((c) => !c.ok).length; const on = i === sel; return (
                     <button key={i} onClick={() => setSel(i)} className="rowh" style={{ width: "100%", textAlign: "left", cursor: "pointer", display: "grid", gridTemplateColumns: "30px 70px minmax(0,1.6fr) 84px 90px 70px", gap: 8, alignItems: "center", padding: "9px 10px", borderRadius: 10, marginBottom: 5, color: C_INV.txt, background: on ? C_INV.cyanSoft : C_INV.panel2, border: `1px solid ${on ? C_INV.cyan + "55" : C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{ln.stt}</span>
                       <span className="tnum" style={{ fontSize: 11.5 }}>{ln.no || "—"}</span>
@@ -2499,7 +2460,7 @@ function InvoiceProcess_INV() {
 
                 {/* journal entries */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 7, opacity: done("cls") ? 1 : .3, transition: "opacity .4s" }}>
-                  {(standard === "IFRS" ? classifyIFRS_INV : classify_INV)(cur).map((r, i) => (
+                  {classify_INV(cur).map((r, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: C_INV.panel2, border: `1px solid ${C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 15, fontWeight: 800, color: r.c, width: 42 }}>{r.acc}</span>
                       <span style={{ fontSize: 9.5, fontWeight: 800, color: r.side === "Nợ" ? C_INV.cyan : C_INV.orange, background: (r.side === "Nợ" ? C_INV.cyan : C_INV.orange) + "1f", padding: "2px 7px", borderRadius: 6, width: 32, textAlign: "center" }}>{r.side === "Nợ" ? t("inv.side.no") : t("inv.side.co")}</span>
@@ -2511,7 +2472,7 @@ function InvoiceProcess_INV() {
 
                 {/* checks */}
                 <div style={{ marginTop: 12, display: "grid", gap: 6, opacity: done("chk") ? 1 : .3, transition: "opacity .4s" }}>
-                  {checkLine_INV(cur, standard).map((c, i) => (
+                  {checkLine_INV(cur).map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 9, alignItems: "center", padding: "8px 11px", borderRadius: 9, background: c.ok ? C_INV.greenSoft : C_INV.orangeSoft, border: `1px solid ${(c.ok ? C_INV.green : C_INV.orange)}33` }}>
                       {c.ok ? <CheckCircle2 size={14} color={C_INV.green} style={{ flex: "0 0 auto" }} /> : <AlertTriangle size={14} color={C_INV.orange} style={{ flex: "0 0 auto" }} />}
                       <span style={{ fontSize: 11.8, fontWeight: 600, flex: 1 }}>{t(c.labelKey)}</span>
@@ -2622,7 +2583,6 @@ function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
   const [userMenu, setUserMenu] = useState(false);
-  const [showCompanySettings, setShowCompanySettings] = useState(false);
 
   useEffect(() => {
     if (!supabase) return;
@@ -2684,10 +2644,6 @@ function AppShell() {
           {userMenu && (
             <div style={{ position: "absolute", top: "calc(100% - 4px)", left: collapsed ? 8 : 14, right: collapsed ? "auto" : 14, zIndex: 999, background: "#111E33", border: `1px solid ${C.line}`, borderRadius: 12, padding: 8, boxShadow: "0 10px 30px rgba(0,0,0,.5)", minWidth: 180 }}>
               {me && <div style={{ fontSize: 11, color: C.sub, padding: "6px 10px 8px", borderBottom: `1px solid ${C.line}`, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me.email}</div>}
-              <button onClick={() => { setShowCompanySettings(true); setUserMenu(false); }} style={{ width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: C.txt, background: "transparent", fontFamily: "inherit" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,.06)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                {t("settings.menu")}
-              </button>
               <button onClick={() => supabase && supabase.auth.signOut()} style={{ width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: "#F26D6D", background: "transparent", fontFamily: "inherit" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(242,109,109,.12)")} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                 {t("user.signout")}
@@ -2695,7 +2651,6 @@ function AppShell() {
             </div>
           )}
         </div>
-        {showCompanySettings && <CompanySettingsModal onClose={() => setShowCompanySettings(false)} />}
 
         <nav style={{ flex: 1, padding: "10px 10px", display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
           {NAV.map((n) => {

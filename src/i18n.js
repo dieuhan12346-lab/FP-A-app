@@ -43,11 +43,4 @@ export function applyUserLanguage(user) {
   }
 }
 
-/** Ngôn ngữ mặc định của công ty — chỉ áp dụng nếu user chưa từng tự chọn ngôn ngữ trên thiết bị này. */
-export function applyCompanyLanguageDefault(lang) {
-  if ((lang === "vi" || lang === "en") && !readStoredLang() && lang !== i18n.language) {
-    i18n.changeLanguage(lang);
-  }
-}
-
 export default i18n;
