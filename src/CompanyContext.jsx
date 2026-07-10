@@ -12,6 +12,14 @@ export function useCompany() {
 export function CompanyProvider({ children }) {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fxTick, setFxTick] = useState(0);
+
+  // Tỷ giá mới về từ API → render lại các số tiền đã quy đổi
+  useEffect(() => {
+    const onFx = () => setFxTick((v) => v + 1);
+    window.addEventListener("fx-rates-updated", onFx);
+    return () => window.removeEventListener("fx-rates-updated", onFx);
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!supabase) { setCompany(null); setLoading(false); return; }
@@ -29,5 +37,5 @@ export function CompanyProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return <CompanyContext.Provider value={{ company, loading, refresh }}>{children}</CompanyContext.Provider>;
+  return <CompanyContext.Provider value={{ company, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
 }

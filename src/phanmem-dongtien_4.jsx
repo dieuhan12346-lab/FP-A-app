@@ -9,7 +9,7 @@ import i18n, { setLanguage, applyUserLanguage } from "./i18n";
 import { saveInvoiceUpload, loadLatestInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
 import { useCompany } from "./CompanyContext";
-import { fmtMoney, fmtMoneyM, fmtMoneyCompactM } from "./lib/money";
+import { fmtMoney, fmtMoneyM, fmtMoneyCompactM, fmtCompactM, fmtCompactB } from "./lib/money";
 import CompanySettingsModal from "./CompanySettingsModal";
 import {
   AlertTriangle, Wallet, Phone, FileSpreadsheet, CheckCircle2, Sparkles,
@@ -181,6 +181,7 @@ function CashflowDashboard() {
   const currency = company?.currency || "VND";
   const standard = company?.accountingStandard || "VAS";
   const fmtVnd = (m) => fmtMoneyM(m, currency);
+  const fmtTr = (m) => fmtCompactM(m, currency);
   const classification = standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
   const [scKey, setScKey] = useState("base");
@@ -240,7 +241,7 @@ function CashflowDashboard() {
         <header style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", justifyContent: "space-between", marginBottom: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
             <div style={{ width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Wallet size={22} color="#1a1206" strokeWidth={2.4} /></div>
-            <div><div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 19, letterSpacing: "-0.02em" }}>Dòng Tiền&nbsp;AI</div><div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>{t("cf.subtitle")}</div></div>
+            <div><div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 19, letterSpacing: "-0.02em" }}>{t("cf.title")}</div><div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>{t("cf.subtitle")}</div></div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button className="btn" onClick={exportExcel} style={expBtn(C.green, C.greenSoft)}><FileDown size={15} />{t("cf.exportExcel")}</button>
@@ -375,9 +376,9 @@ function CashflowDashboard() {
                     <div style={{ minWidth: 0 }}><div style={{ display: "flex", gap: 7, alignItems: "center" }}><span style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>{r.ai && <span style={{ flex: "0 0 auto", fontSize: 9, fontWeight: 800, padding: "2px 5px", borderRadius: 5, background: C.goldSoft, color: C.gold }}>{t("cf.aiSuggest")}</span>}</div><div className="tnum" style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{r.code} · {t("cf.onTime", { p: Math.round(r.onTime * 100) })}</div></div>
                   </div>
                   <span className="tnum" style={{ textAlign: "right", fontSize: 12.5, color: r.days >= 30 ? C.red : C.sub }}>{r.days} {t("cf.days")}</span>
-                  <span className="tnum" style={{ textAlign: "right", fontWeight: 700, fontSize: 13 }}>{r.amount} tr</span>
+                  <span className="tnum" style={{ textAlign: "right", fontWeight: 700, fontSize: 13 }}>{fmtTr(r.amount)}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div style={{ flex: 1, height: 7, borderRadius: 5, background: "rgba(255,255,255,.08)", overflow: "hidden" }}><div style={{ width: `${pEff * 100}%`, height: "100%", background: pc, borderRadius: 5, transition: "width .4s" }} /></div><span className="tnum" style={{ fontSize: 12, fontWeight: 700, color: pc, width: 34, textAlign: "right" }}>{Math.round(pEff * 100)}%</span></div>
-                  <span className="tnum" style={{ textAlign: "right", fontWeight: 700, fontSize: 13, color: C.cyan }}>{Math.round(ev)} tr</span>
+                  <span className="tnum" style={{ textAlign: "right", fontWeight: 700, fontSize: 13, color: C.cyan }}>{fmtTr(ev)}</span>
                   <span className="tnum" style={{ textAlign: "center", fontSize: 12.5, color: C.sub }}>T{w}</span>
                 </button>
               );
@@ -403,7 +404,9 @@ function CashflowDashboard() {
 function Report({ sim, sc, selected, totalEV, onClose }) {
   const { t } = useT();
   const { company } = useCompany();
-  const fmtVnd = (m) => fmtMoneyM(m, company?.currency || "VND");
+  const currency = company?.currency || "VND";
+  const fmtVnd = (m) => fmtMoneyM(m, currency);
+  const fmtTr = (m) => fmtCompactM(m, currency);
   const rk = riskLevel(sim.pNeg, L);
   const sel = RECV.filter((r) => selected.has(r.id));
   const yMin = Math.min(0, ...sim.data.map((d) => d.p10)); const yMax = Math.max(START_CASH, ...sim.data.map((d) => d.p90));
@@ -499,16 +502,16 @@ function Report({ sim, sc, selected, totalEV, onClose }) {
                   return (<tr key={r.id} style={{ background: on ? "rgba(197,137,27,.09)" : idx % 2 ? L.soft : "#fff", borderBottom: `1px solid ${L.hair}` }}>
                     <td style={{ padding: "7px 9px", fontWeight: 600 }}>{r.name}{r.ai && <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 800, color: L.gold, border: `1px solid ${L.gold}`, borderRadius: 4, padding: "1px 4px" }}>AI</span>}</td>
                     <td className="tnum" style={{ padding: "7px 9px", color: L.sub }}>{r.code}</td>
-                    <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 700 }}>{r.amount} tr</td>
+                    <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 700 }}>{fmtTr(r.amount)}</td>
                     <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", color: r.days >= 30 ? L.red : L.sub }}>{r.days} {t("cf.days")}</td>
                     <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 700, color: pc }}>{Math.round(pEff * 100)}%</td>
-                    <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 700, color: L.cyan }}>{Math.round(r.amount * pEff)} tr</td>
+                    <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 700, color: L.cyan }}>{fmtTr(r.amount * pEff)}</td>
                     <td className="tnum" style={{ padding: "7px 9px", textAlign: "center", color: L.sub }}>T{Math.min(13, r.collectWeek + sc.delay + 1)}</td>
                     <td style={{ padding: "7px 9px", textAlign: "center" }}>{on ? <Check size={15} color={L.green} strokeWidth={3} style={{ verticalAlign: "middle" }} /> : <span style={{ color: L.hair }}>—</span>}</td>
                   </tr>); })}
                 <tr style={{ borderTop: `2px solid ${L.ink}` }}>
                   <td colSpan={5} style={{ padding: "7px 9px", textAlign: "right", fontWeight: 700, color: L.sub }}>{t("rp.totalRow")}</td>
-                  <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 800, color: L.green }}>{Math.round(totalEV)} tr</td>
+                  <td className="tnum" style={{ padding: "7px 9px", textAlign: "right", fontWeight: 800, color: L.green }}>{fmtTr(totalEV)}</td>
                   <td colSpan={2}></td>
                 </tr>
               </tbody>
@@ -654,6 +657,10 @@ const SEV_FPA = {
 
 function FpaAutomation() {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtVnd_FPA = (m) => fmtMoneyM(m, currency);
+  const fmtTr_FPA = (m) => fmtCompactM(m, currency);
   const [synced, setSynced] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [activeScen, setActiveScen] = useState({ best: true, base: true, stress: true });
@@ -844,6 +851,10 @@ const pillBadge_FPA = { fontFamily: MONO_FPA, fontSize: 11, fontWeight: 800, pad
 
 function TipBox_FPA({ active, payload, activeScen }) {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtVnd_FPA = (m) => fmtMoneyM(m, currency);
+  const fmtTr_FPA = (m) => fmtCompactM(m, currency);
   if (!active || !payload || !payload.length) return null; const d = payload[0].payload;
   return (
     <div style={{ background: "#0A0F1C", border: `1px solid ${C_FPA.line}`, borderRadius: 12, padding: "10px 12px", fontFamily: UI_FPA, boxShadow: "0 14px 30px rgba(0,0,0,.5)", minWidth: 180 }}>
@@ -974,6 +985,10 @@ const STEP_LABELS_OPS = [
 
 function OpsCashflow() {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtVnd_OPS = (m) => fmtMoneyM(m, currency);
+  const fmtTr_OPS = (m) => fmtCompactM(m, currency);
   const [skus, setSkus] = useState(INIT_SKUS_OPS);
   const [week, setWeek] = useState(0);
   const [auto, setAuto] = useState(false);
@@ -1252,7 +1267,7 @@ function OpsCashflow() {
                       </div>
                       <div style={{ fontSize: 11.8, color: C_OPS.sub, lineHeight: 1.5 }}>
                         {mission.safe
-                          ? t("ops.safeText", { min: fmtTr_OPS(mission.withIdeal.minBal), floor: SAFETY_FLOOR_OPS })
+                          ? t("ops.safeText", { min: fmtTr_OPS(mission.withIdeal.minBal), floor: fmtTr_OPS(SAFETY_FLOOR_OPS) })
                           : <>{t("ops.conflictText1")} <b className="tnum" style={{ color: C_OPS.red }}>{fmtTr_OPS(mission.withIdeal.minBal)}</b>{mission.withIdeal.firstNeg >= 0 && <> {t("ops.conflictNeg", { w: mission.withIdeal.firstNeg + 1 })}</>}{t("ops.conflictText2")}</>}
                       </div>
                     </div>
@@ -1314,7 +1329,7 @@ function OpsCashflow() {
         </div>
 
         <footer style={{ marginTop: 18, fontSize: 11.5, color: C_OPS.sub, textAlign: "center", lineHeight: 1.6 }}>
-          {t("ops.footer", { floor: SAFETY_FLOOR_OPS })}
+          {t("ops.footer", { floor: fmtTr_OPS(SAFETY_FLOOR_OPS) })}
         </footer>
       </div>
     </div>
@@ -1328,6 +1343,10 @@ function Mini_OPS({ label, value, c }) { return <div style={{ textAlign: "right"
 function Lg_OPS({ c, label, dash }) { return <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 15, borderTop: `${dash ? "2px dashed" : "3px solid"} ${c}` }} />{label}</span>; }
 function TipBox_OPS({ active, payload }) {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtVnd_OPS = (m) => fmtMoneyM(m, currency);
+  const fmtTr_OPS = (m) => fmtCompactM(m, currency);
   if (!active || !payload || !payload.length) return null; const d = payload[0].payload;
   return (
     <div style={{ background: "#0A0F1C", border: `1px solid ${C_OPS.line}`, borderRadius: 12, padding: "10px 12px", fontFamily: UI_OPS, boxShadow: "0 14px 30px rgba(0,0,0,.5)", minWidth: 170 }}>
@@ -1383,13 +1402,13 @@ function tierCol(days) {
 }
 
 /* AI-drafted message templates per channel & tone */
-function draftCol(r, channel) {
+function draftCol(r, channel, currency = "VND") {
   const tier = tierCol(r.days);
   const cty = r.name;
 
   // English templates for foreign businesses
   if (r.lang === "en") {
-    const amtEn = `${r.amount}M VND`;
+    const amtEn = fmtCompactM(r.amount, currency);
     if (channel === "email") {
       if (tier.key === "gentle") return {
         subject: `[Payment Reminder] Invoice ${r.code} — ${cty}`,
@@ -1407,13 +1426,13 @@ function draftCol(r, channel) {
       return { body: `Hi ${r.contact},\nInvoice ${amtEn} (${r.code}) is ${r.days} days overdue. Please settle within 3 business days — otherwise we will need to suspend delivery. Your cooperation is appreciated. 🙏` };
     }
     // sms (english)
-    if (tier.key === "gentle") return { body: `${cty}: Reminder — invoice ${r.amount}M VND (${r.code}) is due. Please arrange payment. Thank you!` };
-    if (tier.key === "firm") return { body: `${cty}: Invoice ${r.amount}M VND (${r.code}) is ${r.days} days overdue. Please pay by month-end. Thank you!` };
-    return { body: `[URGENT] ${cty}: Invoice ${r.amount}M VND (${r.code}) overdue ${r.days} days. Pay within 3 days or supply suspended. Contact us immediately!` };
+    if (tier.key === "gentle") return { body: `${cty}: Reminder — invoice ${amtEn} (${r.code}) is due. Please arrange payment. Thank you!` };
+    if (tier.key === "firm") return { body: `${cty}: Invoice ${amtEn} (${r.code}) is ${r.days} days overdue. Please pay by month-end. Thank you!` };
+    return { body: `[URGENT] ${cty}: Invoice ${amtEn} (${r.code}) overdue ${r.days} days. Pay within 3 days or supply suspended. Contact us immediately!` };
   }
 
   // Vietnamese templates
-  const amt = `${r.amount.toLocaleString("vi-VN")} triệu đồng`;
+  const amt = currency === "VND" ? `${r.amount.toLocaleString("vi-VN")} triệu đồng` : fmtCompactM(r.amount, currency);
   if (channel === "email") {
     if (tier.key === "gentle") return { subject: `[Nhắc lịch thanh toán] Công nợ ${r.code} — ${cty}`,
       body: `Kính gửi ${r.contact},\n\nCông ty chúng tôi xin trân trọng nhắc lịch thanh toán khoản công nợ ${amt} (mã ${r.code}), hiện đã đến hạn ${r.days} ngày.\n\nKính mong Quý công ty thu xếp thanh toán trong thời gian sớm nhất. Nếu đã chuyển khoản, xin bỏ qua thông báo này.\n\nTrân trọng cảm ơn sự hợp tác của Quý công ty.` };
@@ -1427,10 +1446,11 @@ function draftCol(r, channel) {
     if (tier.key === "firm") return { body: `Chào ${r.contact},\nKhoản ${amt} (${r.code}) đã quá hạn ${r.days} ngày rồi ạ. Anh/chị hỗ trợ thanh toán giúp em trước cuối tháng nhé, để không ảnh hưởng đơn hàng tới. Em cảm ơn ạ!` };
     return { body: `Chào ${r.contact},\nEm xin thông báo khoản ${amt} (${r.code}) đã quá hạn ${r.days} ngày. Mong anh/chị xử lý trong 3 ngày tới giúp em ạ, nếu không bên em phải tạm dừng giao hàng. Rất mong anh/chị phối hợp 🙏` };
   }
-  // sms
-  if (tier.key === "gentle") return { body: `${cty}: Nhac lich thanh toan cong no ${r.amount}tr (${r.code}) vua den han. Vui long thu xep TT. Cam on!` };
-  if (tier.key === "firm") return { body: `${cty}: Cong no ${r.amount}tr (${r.code}) qua han ${r.days} ngay. De nghi TT truoc cuoi thang de khong anh huong don hang. Cam on!` };
-  return { body: `[KHAN] ${cty}: Cong no ${r.amount}tr (${r.code}) qua han ${r.days} ngay. De nghi TT trong 03 ngay, neu khong se tam dung giao hang. LH ngay!` };
+  // sms (plain ASCII, no dấu)
+  const amtSms = currency === "VND" ? `${r.amount}tr` : `${r.amount}${currency}`;
+  if (tier.key === "gentle") return { body: `${cty}: Nhac lich thanh toan cong no ${amtSms} (${r.code}) vua den han. Vui long thu xep TT. Cam on!` };
+  if (tier.key === "firm") return { body: `${cty}: Cong no ${amtSms} (${r.code}) qua han ${r.days} ngay. De nghi TT truoc cuoi thang de khong anh huong don hang. Cam on!` };
+  return { body: `[KHAN] ${cty}: Cong no ${amtSms} (${r.code}) qua han ${r.days} ngay. De nghi TT trong 03 ngay, neu khong se tam dung giao hang. LH ngay!` };
 }
 
 const CHANNELS_COL = [
@@ -1449,6 +1469,9 @@ const SCHEDULE_COL = [
 
 function DebtCollect() {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtTr_COL = (m) => fmtCompactM(m, currency);
   const [sel, setSel] = useState(DEBTORS_COL[0].id);
   const [channel, setChannel] = useState("email");
   const [sent, setSent] = useState(() => new Set());
@@ -1462,7 +1485,7 @@ function DebtCollect() {
   const debtors = DEBTORS_COL.map((r) => ({ ...r, p: recoverP_COL(r), tier: tierCol(r.days) }))
     .sort((a, b) => b.days - a.days);
   const cur = debtors.find((r) => r.id === sel);
-  const msg = draftCol(cur, channel);
+  const msg = draftCol(cur, channel, currency);
   const markSent = () => setSent((s) => new Set(s).add(cur.id + ":" + channel));
   const isSent = sent.has(cur.id + ":" + channel);
 
@@ -1510,7 +1533,7 @@ function DebtCollect() {
                       <span style={{ flex: "0 0 auto", fontSize: 9.5, fontWeight: 800, color: r.tier.c, background: r.tier.soft, padding: "2px 7px", borderRadius: 5, whiteSpace: "nowrap" }}>{t(r.tier.labelKey)}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, gap: 10 }}>
-                      <span className="tnum" style={{ fontWeight: 700, fontSize: 13 }}>{r.amount} tr</span>
+                      <span className="tnum" style={{ fontWeight: 700, fontSize: 13 }}>{fmtTr_COL(r.amount)}</span>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, maxWidth: 130 }}>
                         <div style={{ flex: 1, height: 6, borderRadius: 4, background: "rgba(255,255,255,.08)", overflow: "hidden" }}><div style={{ width: `${r.p * 100}%`, height: "100%", background: pc, borderRadius: 4 }} /></div>
                         <span className="tnum" style={{ fontSize: 10.5, fontWeight: 700, color: pc, width: 30, textAlign: "right" }}>{Math.round(r.p * 100)}%</span>
@@ -1531,7 +1554,7 @@ function DebtCollect() {
                   <div style={{ fontFamily: DISP_COL, fontWeight: 700, fontSize: 16 }}>{cur.name}</div>
                   {cur.lang === "en" && <span style={{ fontSize: 10, fontWeight: 800, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "2px 8px", borderRadius: 6 }}>🌐 {t("col.foreign")}</span>}
                 </div>
-                <div style={{ fontSize: 11.8, color: C_COL.sub, marginTop: 2 }}>{cur.contact} · {t("col.overdue", { d: cur.days })} · {cur.amount} tr</div>
+                <div style={{ fontSize: 11.8, color: C_COL.sub, marginTop: 2 }}>{cur.contact} · {t("col.overdue", { d: cur.days })} · {fmtTr_COL(cur.amount)}</div>
               </div>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, color: cur.tier.c, background: cur.tier.soft, padding: "5px 11px", borderRadius: 20 }}>{t("col.tone", { label: t(cur.tier.labelKey) })}</span>
             </div>
@@ -1637,6 +1660,11 @@ const fmtVnd_CR = (m) => `${Math.round(m * 1e6).toLocaleString("vi-VN")} ₫`;
 
 function CreditScore() {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtVnd_CR = (m) => fmtMoneyM(m, currency);
+  const fmtTr_CR = (m) => fmtCompactM(m, currency);
+  const fmtB_CR = (b) => fmtCompactB(b, currency);
   const [sel, setSel] = useState(PARTNERS_CR[1]);
   const [phase, setPhase] = useState("idle"); // idle | scoring | done
   const [progress, setProgress] = useState(0); // 0..5 factors revealed
@@ -1708,7 +1736,7 @@ function CreditScore() {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 12.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                        <div style={{ fontSize: 10.8, color: C_CR.sub, marginTop: 2 }}>{t(p.industryKey)} · {t("cr.revFmt", { n: p.revBn })}</div>
+                        <div style={{ fontSize: 10.8, color: C_CR.sub, marginTop: 2 }}>{t(p.industryKey)} · {t("cr.revFmt", { n: fmtB_CR(p.revBn) })}</div>
                       </div>
                       <span className="tnum" style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 800, color: pg.c, background: pg.c + "1f", padding: "2px 7px", borderRadius: 6 }}>{pg.g}</span>
                     </div>
@@ -1726,7 +1754,7 @@ function CreditScore() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontFamily: DISP_CR, fontWeight: 700, fontSize: 17 }}>{sel.name}</div>
-                <div style={{ fontSize: 12, color: C_CR.sub, marginTop: 2 }}>{t(sel.industryKey)} · {t("cr.rev", { rev: t("cr.revFmt", { n: sel.revBn }) })} · {t("cr.req", { r: sel.requested })}</div>
+                <div style={{ fontSize: 12, color: C_CR.sub, marginTop: 2 }}>{t(sel.industryKey)} · {t("cr.rev", { rev: t("cr.revFmt", { n: fmtB_CR(sel.revBn) }) })} · {t("cr.req", { r: fmtTr_CR(sel.requested) })}</div>
               </div>
               <button className="btn" onClick={run} disabled={phase === "scoring"} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, color: "#06202f", background: phase === "scoring" ? "#33415566" : `linear-gradient(135deg, ${C_CR.cyan}, #2E9BD6)`, opacity: phase === "scoring" ? .7 : 1 }}>
                 {phase === "scoring" ? <><RefreshCw size={15} className="spin" />{t("cr.scoring")}</> : phase === "done" ? <><RefreshCw size={15} />{t("cr.rescore")}</> : <><Zap size={15} />{t("cr.score.btn")}</>}
@@ -1795,15 +1823,15 @@ function CreditScore() {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap", flex: "0 1 auto" }}>
-                    <Mini_CR label={t("cr.limit.requested")} value={`${sel.requested} tr`} c={C_CR.sub} />
+                    <Mini_CR label={t("cr.limit.requested")} value={fmtTr_CR(sel.requested)} c={C_CR.sub} />
                     <Mini_CR label={t("cr.limit.approved")} value={`${safeLimit} tr`} c={g.c} />
                     <Mini_CR label={t("cr.limit.ratio")} value={`${Math.round(g.ratio * 100)}%`} c={g.c} />
                   </div>
                 </div>
                 <div style={{ fontSize: 11.8, color: C_CR.sub, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C_CR.line}`, lineHeight: 1.55 }}>
                   {safeLimit >= sel.requested
-                    ? t("cr.limit.good", { g: g.g, req: sel.requested })
-                    : t("cr.limit.reduced", { g: g.g, label: t(g.labelKey), safe: safeLimit, req: sel.requested, weak: t(weakest_CR(sel.f)) })}
+                    ? t("cr.limit.good", { g: g.g, req: fmtTr_CR(sel.requested) })
+                    : t("cr.limit.reduced", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), req: fmtTr_CR(sel.requested), weak: t(weakest_CR(sel.f)) })}
                 </div>
                 <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
                   <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)` }}><Check size={15} />{t("cr.apply")}</button>
@@ -1897,6 +1925,9 @@ const fmtShort_PR = (m) => `${m.toLocaleString("vi-VN", { maximumFractionDigits:
 
 function PricingPlans() {
   const { t } = useT();
+  const { company } = useCompany();
+  const currency = company?.currency || "VND";
+  const fmtShort_PR = (m) => fmtCompactM(m, currency, { maximumFractionDigits: 1 });
   const [tierId, setTierId] = useState("medium"); // selected data-scale tier
   const [active, setActive] = useState(() => new Set());
   const [annual, setAnnual] = useState(false);
@@ -2582,13 +2613,15 @@ function Mini2Inv({ label, v, c, sub }) {
 function LgInv({ c, label, dash }) { return <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 18, borderTop: `${dash ? "2px dashed" : "3px solid"} ${c}` }} />{label}</span>; }
 function CashTipInv({ active, payload }) {
   const { t } = useT();
+  const { company } = useCompany();
+  const fmtTr = (m) => fmtCompactM(m, company?.currency || "VND");
   if (!active || !payload || !payload.length) return null; const d = payload[0].payload;
   return (
     <div style={{ background: "#0A0F1C", border: `1px solid ${C_INV.line}`, borderRadius: 12, padding: "11px 13px", fontFamily: UI_INV, boxShadow: "0 14px 30px rgba(0,0,0,.5)", minWidth: 190 }}>
       <div style={{ fontWeight: 800, fontSize: 13 }}>{t("inv.chart.week")} {d.idx + 1} <span style={{ color: C_INV.sub, fontWeight: 500 }}>· {d.range}</span></div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, fontSize: 12, marginTop: 6 }}><span style={{ color: C_INV.sub }}>{t("inv.tip.after")}</span><span className="tnum" style={{ color: d.recv < 0 ? C_INV.red : C_INV.green, fontWeight: 700 }}>{d.recv.toLocaleString("vi-VN")} tr</span></div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, fontSize: 12, marginTop: 4 }}><span style={{ color: C_INV.sub }}>{t("inv.tip.before")}</span><span className="tnum" style={{ color: d.base < 0 ? C_INV.red : C_INV.sub, fontWeight: 700 }}>{d.base.toLocaleString("vi-VN")} tr</span></div>
-      {d.collect > 0 && <div style={{ fontSize: 11, color: C_INV.green, marginTop: 6 }}>★ {t("inv.tip.collect")} +{d.collect.toLocaleString("vi-VN")} tr</div>}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, fontSize: 12, marginTop: 6 }}><span style={{ color: C_INV.sub }}>{t("inv.tip.after")}</span><span className="tnum" style={{ color: d.recv < 0 ? C_INV.red : C_INV.green, fontWeight: 700 }}>{fmtTr(d.recv)}</span></div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, fontSize: 12, marginTop: 4 }}><span style={{ color: C_INV.sub }}>{t("inv.tip.before")}</span><span className="tnum" style={{ color: d.base < 0 ? C_INV.red : C_INV.sub, fontWeight: 700 }}>{fmtTr(d.base)}</span></div>
+      {d.collect > 0 && <div style={{ fontSize: 11, color: C_INV.green, marginTop: 6 }}>★ {t("inv.tip.collect")} +{fmtTr(d.collect)}</div>}
     </div>
   );
 }
@@ -2757,6 +2790,7 @@ function AppShell() {
 
 /* placeholder/summary pages for the other modules */
 function ModulePage({ page, go }) {
+  const { t } = useT();
   const META = {
     fpa: { icon: Brain, c: C.cyan, title: "FP&A Automation", tagline: "Hệ thống đưa ra quyết định tài chính — thay cho Excel thủ công",
       feats: [["Thu thập & Hợp nhất", "Kết nối SAP, Oracle, Salesforce, MISA & ngân hàng về một nguồn sự thật."],
@@ -2811,10 +2845,10 @@ function ModulePage({ page, go }) {
       <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "15px 18px", borderRadius: 14, background: C.panel2, border: `1px dashed ${C.line}` }}>
         <Boxes size={20} color={C.sub} style={{ flex: "0 0 auto" }} />
         <div style={{ flex: 1, fontSize: 12.5, color: C.sub, lineHeight: 1.5 }}>
-          Module này là một phần của bộ <b style={{ color: C.txt }}>Dòng Tiền AI</b>. Bản tương tác đầy đủ có sẵn riêng — tại đây hiển thị tóm tắt năng lực trong khung phần mềm hợp nhất.
+          {t("mod.partOf.prefix")} <b style={{ color: C.txt }}>{t("cf.title")}</b>{t("mod.partOf.suffix")}
         </div>
         <button className="navi" onClick={() => go("cashflow")} style={{ flex: "0 0 auto", width: "auto", display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 15px", borderRadius: 10, fontWeight: 700, fontSize: 12.5, color: C.gold, background: C.goldSoft, border: `1px solid ${C.gold}44` }}>
-          <LayoutDashboard size={15} />Về Dòng tiền
+          <LayoutDashboard size={15} />{t("mod.backToCashflow")}
         </button>
       </div>
     </div>
