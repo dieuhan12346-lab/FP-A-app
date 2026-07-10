@@ -635,7 +635,7 @@ const ALERTS_FPA = [
   { id: "a1", type: "ar", sev: "high", icon: Users,
     title: "fpa.al.a1.t",
     detail: "fpa.al.a1.d",
-    metric: "320 tr", eta: "fpa.al.a1.e" },
+    metricM: 320, eta: "fpa.al.a1.e" },
   { id: "a2", type: "liq", sev: "high", icon: Wallet,
     title: "fpa.al.a2.t",
     detail: "fpa.al.a2.d",
@@ -647,7 +647,7 @@ const ALERTS_FPA = [
   { id: "a4", type: "ar", sev: "medium", icon: Users,
     title: "fpa.al.a4.t",
     detail: "fpa.al.a4.d",
-    metric: "215 tr", eta: "fpa.al.a4.e" },
+    metricM: 215, eta: "fpa.al.a4.e" },
 ];
 const SEV_FPA = {
   high:   { c: C_FPA.red,    soft: C_FPA.redSoft,    label: "fpa.sev.high" },
@@ -829,7 +829,7 @@ function FpaAutomation() {
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 11, paddingTop: 10, borderTop: `1px solid ${C_FPA.line}` }}>
                   <span style={{ fontSize: 10.5, color: C_FPA.sub, display: "inline-flex", alignItems: "center", gap: 5 }}><Clock size={11} />{t(a.eta)}</span>
-                  <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: sev.c }}>{a.metric.startsWith("fpa.") ? t(a.metric) : a.metric}</span>
+                  <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: sev.c }}>{a.metricM != null ? fmtCompactM(a.metricM, currency) : a.metric.startsWith("fpa.") ? t(a.metric) : a.metric}</span>
                 </div>
               </div>
             ); })}
@@ -1824,7 +1824,7 @@ function CreditScore() {
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap", flex: "0 1 auto" }}>
                     <Mini_CR label={t("cr.limit.requested")} value={fmtTr_CR(sel.requested)} c={C_CR.sub} />
-                    <Mini_CR label={t("cr.limit.approved")} value={`${safeLimit} tr`} c={g.c} />
+                    <Mini_CR label={t("cr.limit.approved")} value={fmtTr_CR(safeLimit)} c={g.c} />
                     <Mini_CR label={t("cr.limit.ratio")} value={`${Math.round(g.ratio * 100)}%`} c={g.c} />
                   </div>
                 </div>
