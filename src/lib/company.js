@@ -17,24 +17,38 @@ function normalizeCompany(row) {
   };
 }
 
-/** Công ty đang dùng = công ty mới nhất mà user là thành viên (tạo hồ sơ mới sẽ tự chuyển sang nó). */
+/** Membership + company, đã xử lý DB cũ chưa có cột last_used_at. */
+async function fetchMemberships() {
+  const sel = (withLastUsed) =>
+    supabase
+      .from("company_members")
+      .select((withLastUsed ? "last_used_at, " : "") + "company_id, created_at, companies(*)")
+      .order(withLastUsed ? "last_used_at" : "created_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
+  try {
+    const { data, error } = await sel(true);
+    if (error) throw error;
+    return data || [];
+  } catch {
+    const { data, error } = await sel(false);
+    if (error) throw error;
+    return data || [];
+  }
+}
+
+/** Công ty đang dùng = hồ sơ được chọn gần nhất (last_used_at), fallback hồ sơ mới tạo nhất. */
 export async function fetchMyCompany() {
   if (!supabase) return null;
-  const { data: member, error: e1 } = await supabase
-    .from("company_members")
-    .select("company_id")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (e1) throw e1;
-  if (!member) return null;
-  const { data: company, error: e2 } = await supabase
-    .from("companies")
-    .select("*")
-    .eq("id", member.company_id)
-    .single();
-  if (e2) throw e2;
-  return normalizeCompany(company);
+  const rows = await fetchMemberships();
+  const hit = rows.find((r) => r.companies);
+  return hit ? normalizeCompany(hit.companies) : null;
+}
+
+/** Tất cả hồ sơ công ty của user — mỗi công ty là một bộ sổ sách riêng. */
+export async function listMyCompanies() {
+  if (!supabase) return [];
+  const rows = await fetchMemberships();
+  return rows.filter((r) => r.companies).map((r) => normalizeCompany(r.companies));
 }
 
 export async function createCompany({ name, country, language, currency, accountingStandard, taxRegime, timezone }) {
@@ -52,7 +66,19 @@ export async function createCompany({ name, country, language, currency, account
     .from("company_members")
     .insert({ company_id: company.id, user_id: uid, role: "owner" });
   if (e2) throw e2;
+  // hồ sơ mới trở thành hồ sơ đang dùng (bỏ qua lỗi nếu DB chưa có cột last_used_at)
+  await switchCompany(company.id).catch(() => {});
   return normalizeCompany(company);
+}
+
+/** Chuyển sang dùng hồ sơ khác — ghi last_used_at để mọi thiết bị cùng nhận. */
+export async function switchCompany(companyId) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("company_members")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("company_id", companyId);
+  if (error) throw error;
 }
 
 /** Hồ sơ công ty là bất biến sau khi tạo — chỉ được đổi tên.

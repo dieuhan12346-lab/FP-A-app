@@ -43,11 +43,16 @@ export function applyUserLanguage(user) {
   }
 }
 
-/** Ngôn ngữ mặc định của công ty — chỉ áp dụng nếu user chưa từng tự chọn ngôn ngữ trên thiết bị này. */
-export function applyCompanyLanguageDefault(lang) {
-  if ((lang === "vi" || lang === "en") && !readStoredLang() && lang !== i18n.language) {
-    i18n.changeLanguage(lang);
-  }
+/** Ngôn ngữ UI theo quốc gia hồ sơ công ty:
+ *  - Ngoài Việt Nam → ép tiếng Anh (nút chuyển VI/EN bị ẩn; không ghi đè lựa chọn đã lưu
+ *    để khi quay về hồ sơ VN vẫn nhớ ý user).
+ *  - Việt Nam → ưu tiên lựa chọn user đã lưu, chưa có thì lấy ngôn ngữ mặc định của hồ sơ. */
+export function applyCompanyUiLanguage(company) {
+  if (!company) return;
+  const target = company.country && company.country !== "VN"
+    ? "en"
+    : readStoredLang() || (company.language === "en" ? "en" : "vi");
+  if (target !== i18n.language) i18n.changeLanguage(target);
 }
 
 export default i18n;

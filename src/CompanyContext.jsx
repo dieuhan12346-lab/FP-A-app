@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { fetchMyCompany } from "./lib/company";
 import { supabase } from "./lib/supabase";
-import { applyCompanyLanguageDefault } from "./i18n";
+import { applyCompanyUiLanguage } from "./i18n";
 
 export const CompanyContext = createContext({ company: null, loading: true, refresh: async () => {} });
 
@@ -27,7 +27,7 @@ export function CompanyProvider({ children }) {
     try {
       const c = await fetchMyCompany();
       setCompany(c);
-      if (c) applyCompanyLanguageDefault(c.language);
+      if (c) applyCompanyUiLanguage(c);
     } catch {
       setCompany(null);
     } finally {

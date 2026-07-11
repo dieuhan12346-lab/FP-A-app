@@ -6,8 +6,12 @@ import {
 import * as XLSX from "xlsx";
 import { useTranslation, I18nextProvider } from "react-i18next";
 import i18n, { setLanguage, applyUserLanguage } from "./i18n";
-import { saveInvoiceUpload, loadLatestInvoiceUpload } from "./lib/db";
+import { saveInvoiceUpload, loadLatestInvoiceUpload, listInvoiceUploads, loadInvoiceUpload, deleteInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
+import { loadAccounts, accountName } from "./lib/accounts";
+import { fetchCashflowData, addReceivablesFromInvoiceLines } from "./lib/cashflow";
+import CashflowDataModal from "./CashflowDataModal";
+import { DEMO_MODE } from "./lib/demo";
 import { useCompany } from "./CompanyContext";
 import { fmtMoney, fmtMoneyM, fmtMoneyCompactM, fmtCompactM, fmtCompactB } from "./lib/money";
 import CompanySettingsModal from "./CompanySettingsModal";
@@ -108,8 +112,8 @@ const CLASSIFICATION_IFRS = [
 
 /* ---------- helpers ---------- */
 const fmtVnd = (m) => `${Math.round(m * 1e6).toLocaleString("vi-VN")} ₫`;
-function weekRanges() {
-  const start = new Date(2026, 5, 1); const out = [];
+function weekRangesFrom(start) {
+  const out = [];
   for (let i = 0; i < 13; i++) {
     const a = new Date(start); a.setDate(start.getDate() + i * 7);
     const b = new Date(a); b.setDate(a.getDate() + 6);
@@ -118,7 +122,52 @@ function weekRanges() {
   }
   return out;
 }
-const RANGES = weekRanges();
+const RANGES = weekRangesFrom(new Date(2026, 5, 1));
+
+/* Bộ dữ liệu cấp cho mô phỏng: demo mặc định, thay bằng số thật khi công ty có dữ liệu.
+   Đơn vị tiền trong dataset: TRIỆU đồng. */
+const DEMO_DS = { recv: RECV, inflow: INFLOW, outflow: OUTFLOW, startCash: START_CASH, ranges: RANGES, real: false };
+/* Bản chính khi công ty chưa nhập gì: KHÔNG hiện số demo — dataset rỗng + lời nhắc nhập liệu */
+const EMPTY_DS = { recv: [], inflow: Array(13).fill(0), outflow: Array(13).fill(0), startCash: 0, ranges: weekRangesFrom(new Date()), real: true, empty: true };
+const shortName = (r) => (r ? SHORT[r.id] || String(r.name).trim().split(/\s+/).slice(-2).join(" ") : "");
+
+/** Dựng dataset thật từ dữ liệu DB (receivables/payables/openingCash — đơn vị VND). */
+function buildRealDS(data) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const DAY = 86400000;
+  const recv = (data.receivables || [])
+    .filter((r) => r.status !== "paid")
+    .map((r) => {
+      const dd = Math.round((new Date(r.dueDate) - today) / DAY); // số ngày tới hạn (âm = quá hạn)
+      const base = {
+        id: r.id,
+        name: r.customer,
+        code: r.invoiceNo ? `HĐ ${r.invoiceNo}` : "—",
+        amount: (Number(r.amount) || 0) / 1e6,
+        days: Math.max(0, -dd),                       // số ngày quá hạn
+        onTime: 0.85,                                  // chưa có lịch sử trả → mặc định
+        collectWeek: clamp(Math.floor(Math.max(0, dd) / 7), 0, 12),
+        ai: false,
+        fromInvoice: r.source === "invoice",
+      };
+      return { ...base, p: recoverP(base) };
+    });
+  const outflow = Array(13).fill(0);
+  (data.payables || [])
+    .filter((p) => p.status !== "paid")
+    .forEach((p) => {
+      const w = clamp(Math.floor((new Date(p.dueDate) - today) / (7 * DAY)), 0, 12);
+      outflow[w] += (Number(p.amount) || 0) / 1e6;
+    });
+  return {
+    recv,
+    inflow: Array(13).fill(0), // v1: tiền vào = thu hồi công nợ; doanh thu định kỳ chưa nhập
+    outflow,
+    startCash: (Number(data.openingCash) || 0) / 1e6,
+    ranges: weekRangesFrom(today),
+    real: true,
+  };
+}
 function mulberry32(a) {
   return function () {
     a |= 0; a = (a + 0x6d2b79f5) | 0;
@@ -129,41 +178,43 @@ function mulberry32(a) {
 }
 const pct = (arr, q) => { const a = [...arr].sort((x, y) => x - y); return a[Math.floor(q * (a.length - 1))]; };
 
-function simulate(selectedSet, sc, seed, RUNS = 1400) {
+function simulate(selectedSet, sc, seed, RUNS = 1400, ds = DEMO_DS) {
   const rng = mulberry32(seed);
   const gauss = () => { let u = 0, v = 0; while (u === 0) u = rng(); while (v === 0) v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
   const weekly = Array.from({ length: 13 }, () => []); const negAt = Array(13).fill(0); const mins = [];
   for (let run = 0; run < RUNS; run++) {
     const collectAt = Array(13).fill(0);
-    for (const r of RECV) {
+    for (const r of ds.recv) {
       const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99);
       const hit = rng() < pEff; const slip = rng() < 0.4 ? 1 : 0;
       if (selectedSet.has(r.id) && hit) { let w = r.collectWeek + sc.delay + slip; if (w > 12) w = 12; collectAt[w] += r.amount; }
     }
-    let bal = START_CASH, mn = Infinity;
+    let bal = ds.startCash, mn = Infinity;
     for (let i = 0; i < 13; i++) {
-      const rev = INFLOW[i] * (1 + sc.rev) * (1 + gauss() * sc.revSd);
-      bal += rev - OUTFLOW[i] * (1 + sc.cost) + collectAt[i];
+      const rev = ds.inflow[i] * (1 + sc.rev) * (1 + gauss() * sc.revSd);
+      bal += rev - ds.outflow[i] * (1 + sc.cost) + collectAt[i];
       weekly[i].push(bal); if (bal < 0) negAt[i]++; if (bal < mn) mn = bal;
     }
     mins.push(mn);
   }
-  const data = RANGES.map((rg, i) => ({ name: `T${i + 1}`, range: rg, idx: i, p10: pct(weekly[i], 0.1), p50: pct(weekly[i], 0.5), p90: pct(weekly[i], 0.9), band: [pct(weekly[i], 0.1), pct(weekly[i], 0.9)], negShare: negAt[i] / RUNS }));
+  const data = ds.ranges.map((rg, i) => ({ name: `T${i + 1}`, range: rg, idx: i, p10: pct(weekly[i], 0.1), p50: pct(weekly[i], 0.5), p90: pct(weekly[i], 0.9), band: [pct(weekly[i], 0.1), pct(weekly[i], 0.9)], negShare: negAt[i] / RUNS }));
   const pNeg = mins.filter((m) => m < 0).length / RUNS;
   let riskWeek = 0; data.forEach((d, i) => { if (d.negShare > data[riskWeek].negShare) riskWeek = i; });
   return { data, pNeg, expMin: pct(mins, 0.5), worstMin: pct(mins, 0.1), riskWeek, firstP50Neg: data.findIndex((d) => d.p50 < 0) };
 }
-function optimize(sc, seed, target) {
-  const ids = RECV.map((r) => r.id); let best = null;
+function optimize(sc, seed, target, ds = DEMO_DS) {
+  // duyệt tổ hợp 2^n — giới hạn 8 khoản lớn nhất để không treo UI khi dữ liệu thật nhiều dòng
+  const pool = [...ds.recv].sort((a, b) => b.amount - a.amount).slice(0, 8);
+  const ids = pool.map((r) => r.id); let best = null;
   for (let mask = 1; mask < (1 << ids.length); mask++) {
     const set = new Set(); let count = 0, effort = 0;
     ids.forEach((id, i) => { if (mask & (1 << i)) { set.add(id); count++; } });
-    RECV.forEach((r) => { if (set.has(r.id)) effort += 1 - clamp(r.p * (1 - sc.haircut), 0, 0.99); });
-    const { pNeg } = simulate(set, sc, seed, 500);
+    pool.forEach((r) => { if (set.has(r.id)) effort += 1 - clamp(r.p * (1 - sc.haircut), 0, 0.99); });
+    const { pNeg } = simulate(set, sc, seed, 500, ds);
     if (pNeg <= target) { if (!best || count < best.count || (count === best.count && effort < best.effort)) best = { ids: [...set], count, effort, pNeg }; }
   }
   if (best) return { ...best, feasible: true };
-  return { ids, count: ids.length, pNeg: simulate(new Set(ids), sc, seed, 800).pNeg, feasible: false };
+  return { ids, count: ids.length, pNeg: simulate(new Set(ids), sc, seed, 800, ds).pNeg, feasible: false };
 }
 function riskLevel(p, pal) {
   if (p < 0.10) return { t: "An toàn", key: "safe", c: pal.green, Icon: ShieldCheck };
@@ -191,6 +242,21 @@ function CashflowDashboard() {
   const [showReport, setShowReport] = useState(false);
   const [srcOpen, setSrcOpen] = useState(false);
   const [connected, setConnected] = useState(() => new Set(["misa"]));
+  const [cfData, setCfData] = useState(null);     // dữ liệu thật từ Supabase (null = chưa có/đang tải)
+  const [showData, setShowData] = useState(false); // modal nhập liệu
+
+  const reloadCf = () => {
+    if (!company?.id) { setCfData(null); return; }
+    fetchCashflowData(company.id).then(setCfData).catch(() => setCfData(null));
+  };
+  useEffect(() => { setCfData(null); reloadCf(); }, [company?.id]);
+
+  // dataset cấp cho mô phỏng: bản demo dùng số minh họa; bản chính CHỈ dùng số thật (chưa có → trống)
+  const ds = useMemo(() => (DEMO_MODE ? DEMO_DS : cfData && cfData.hasReal ? buildRealDS(cfData) : EMPTY_DS), [cfData]);
+  useEffect(() => {
+    setPlan(null);
+    setSelected(ds.real ? new Set(ds.recv.map((r) => r.id)) : new Set(["r1", "r2"]));
+  }, [ds]);
 
   useEffect(() => {
     const l = document.createElement("link"); l.rel = "stylesheet";
@@ -202,27 +268,27 @@ function CashflowDashboard() {
   const toggleConnect = (id) => setConnected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const sc = useMemo(() => scKey === "custom" ? { key: "custom", name: "Tùy chỉnh", ...custom, revSd: clamp(0.06 + Math.abs(custom.rev) * 0.35, 0.06, 0.22) } : PRESETS.find((s) => s.key === scKey), [scKey, custom]);
   const seed = useMemo(() => { let h = 7; const str = scKey + JSON.stringify(custom) + [...selected].sort().join(""); for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h >>> 0; }, [selected, scKey, custom]);
-  const sim = useMemo(() => simulate(selected, sc, seed), [selected, sc, seed]);
+  const sim = useMemo(() => simulate(selected, sc, seed, 1400, ds), [selected, sc, seed, ds]);
   const rk = riskLevel(sim.pNeg, C);
-  const totalEV = RECV.filter((r) => selected.has(r.id)).reduce((s, r) => s + r.amount * clamp(r.p * (1 - sc.haircut), 0, 0.99), 0);
-  const yMin = Math.min(0, ...sim.data.map((d) => d.p10)); const yMax = Math.max(START_CASH, ...sim.data.map((d) => d.p90));
+  const totalEV = ds.recv.filter((r) => selected.has(r.id)).reduce((s, r) => s + r.amount * clamp(r.p * (1 - sc.haircut), 0, 0.99), 0);
+  const yMin = Math.min(0, ...sim.data.map((d) => d.p10)); const yMax = Math.max(ds.startCash, ...sim.data.map((d) => d.p90));
 
-  const runOptimize = () => { const res = optimize(sc, seed, target); setPlan({ ...res, before: sim.pNeg }); setSelected(new Set(res.ids)); };
+  const runOptimize = () => { const res = optimize(sc, seed, target, ds); setPlan({ ...res, before: sim.pNeg }); setSelected(new Set(res.ids)); };
   const exportExcel = () => {
     const scName = sc.key === "custom" ? t("cf.sc.custom") : t("sc." + sc.key);
     const wb = XLSX.utils.book_new();
-    const ov = [[t("cf.xls.title")], [t("cf.xls.company"), COMPANY], [t("cf.xls.date"), new Date().toLocaleDateString(lang === "en" ? "en-US" : "vi-VN")], [t("cf.xls.scenario"), scName], [t("cf.xls.pneg13w"), `${Math.round(sim.pNeg * 100)}%`], [t("cf.xls.risklevel"), t(RK_LABEL[rk.key])], [t("cf.xls.trough"), fmtVnd(sim.expMin)], [t("cf.xls.worst"), fmtVnd(sim.worstMin)], [t("cf.xls.riskweek"), t("cf.xls.weekOf", { w: sim.riskWeek + 1, range: RANGES[sim.riskWeek] })], [t("cf.xls.evselected"), fmtVnd(totalEV)], [t("cf.xls.startcash"), fmtVnd(START_CASH)]];
+    const ov = [[t("cf.xls.title")], [t("cf.xls.company"), COMPANY], [t("cf.xls.date"), new Date().toLocaleDateString(lang === "en" ? "en-US" : "vi-VN")], [t("cf.xls.scenario"), scName], [t("cf.xls.pneg13w"), `${Math.round(sim.pNeg * 100)}%`], [t("cf.xls.risklevel"), t(RK_LABEL[rk.key])], [t("cf.xls.trough"), fmtVnd(sim.expMin)], [t("cf.xls.worst"), fmtVnd(sim.worstMin)], [t("cf.xls.riskweek"), t("cf.xls.weekOf", { w: sim.riskWeek + 1, range: ds.ranges[sim.riskWeek] })], [t("cf.xls.evselected"), fmtVnd(totalEV)], [t("cf.xls.startcash"), fmtVnd(ds.startCash)]];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ov), t("cf.xls.sheet.overview"));
     const fc = [[t("cf.xls.col.week"), t("cf.xls.col.range"), "P10 (tr)", "P50 (tr)", "P90 (tr)", t("cf.xls.col.inflow"), t("cf.xls.col.outflow"), t("cf.xls.col.risk")]];
-    sim.data.forEach((d) => fc.push([d.idx + 1, d.range, Math.round(d.p10), Math.round(d.p50), Math.round(d.p90), INFLOW[d.idx], OUTFLOW[d.idx], `${Math.round(d.negShare * 100)}%`]));
+    sim.data.forEach((d) => fc.push([d.idx + 1, d.range, Math.round(d.p10), Math.round(d.p50), Math.round(d.p90), Math.round(ds.inflow[d.idx]), Math.round(ds.outflow[d.idx]), `${Math.round(d.negShare * 100)}%`]));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fc), t("cf.xls.sheet.forecast"));
     const dl = [[t("cf.xls.col.customer"), t("cf.xls.col.acc"), t("cf.xls.col.debt"), t("cf.xls.col.overdue"), t("cf.xls.col.onTime"), t("cf.xls.col.prob"), t("cf.xls.col.ev"), t("cf.xls.col.collectW"), t("cf.xls.col.inPlan")]];
-    RECV.forEach((r) => { const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); dl.push([r.name, r.code, r.amount, r.days, `${Math.round(r.onTime * 100)}%`, `${Math.round(pEff * 100)}%`, Math.round(r.amount * pEff), `T${Math.min(13, r.collectWeek + sc.delay + 1)}`, selected.has(r.id) ? t("cf.xls.yes") : ""]); });
+    ds.recv.forEach((r) => { const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); dl.push([r.name, r.code, r.amount, r.days, `${Math.round(r.onTime * 100)}%`, `${Math.round(pEff * 100)}%`, Math.round(r.amount * pEff), `T${Math.min(13, r.collectWeek + sc.delay + 1)}`, selected.has(r.id) ? t("cf.xls.yes") : ""]); });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dl), t("cf.xls.sheet.receivables"));
     XLSX.writeFile(wb, "BaoCao_DongTienAI.xlsx");
   };
 
-  if (showReport) return <Report sim={sim} sc={sc} selected={selected} totalEV={totalEV} onClose={() => setShowReport(false)} />;
+  if (showReport) return <Report sim={sim} sc={sc} selected={selected} totalEV={totalEV} ds={ds} onClose={() => setShowReport(false)} />;
 
   return (
     <div style={{ fontFamily: UI, color: C.txt }}>
@@ -243,11 +309,29 @@ function CashflowDashboard() {
             <div style={{ width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Wallet size={22} color="#1a1206" strokeWidth={2.4} /></div>
             <div><div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 19, letterSpacing: "-0.02em" }}>{t("cf.title")}</div><div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>{t("cf.subtitle")}</div></div>
           </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            {(() => { const mode = !ds.real ? { k: "cf.mode.demo", tip: "cf.mode.demo.tip", c: C.gold, bg: C.goldSoft } : ds.empty ? { k: "cf.mode.empty", tip: "cf.mode.empty.tip", c: C.orange, bg: C.orangeSoft } : { k: "cf.mode.real", tip: "cf.mode.real.tip", c: C.green, bg: C.greenSoft }; return (
+              <span title={t(mode.tip)} style={{ fontSize: 10.5, fontWeight: 800, padding: "4px 10px", borderRadius: 7, letterSpacing: ".02em", color: mode.c, background: mode.bg, border: `1px solid ${mode.c}44` }}>{t(mode.k)}</span>
+            ); })()}
+            {!DEMO_MODE && <button className="btn" onClick={() => setShowData(true)} style={expBtn(C.violet, C.violetSoft)}><Database size={15} />{t("cf.data.button")}</button>}
             <button className="btn" onClick={exportExcel} style={expBtn(C.green, C.greenSoft)}><FileDown size={15} />{t("cf.exportExcel")}</button>
             <button className="btn" onClick={() => setShowReport(true)} style={expBtn(C.cyan, C.cyanSoft)}><FileText size={15} />{t("cf.reportPDF")}</button>
           </div>
         </header>
+
+        {showData && <CashflowDataModal companyId={company?.id} data={cfData} onChanged={reloadCf} onClose={() => setShowData(false)} />}
+
+        {/* bản chính, công ty chưa có dữ liệu → nhắc nhập, không hiện số giả */}
+        {ds.empty && (
+          <div className="card" style={{ ...panel, marginBottom: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", border: `1.5px dashed ${C.orange}55` }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: C.orangeSoft }}><Database size={19} color={C.orange} /></div>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{t("cf.empty.title")}</div>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, lineHeight: 1.55 }}>{t("cf.empty.desc")}</div>
+            </div>
+            <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#1a1206", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Database size={15} />{t("cf.empty.cta")}</button>
+          </div>
+        )}
 
         {/* CONNECT SOFTWARE (dropdown picker) */}
         <div className="card" style={{ ...panel, padding: 0, marginBottom: 16, overflow: "hidden" }}>
@@ -306,7 +390,7 @@ function CashflowDashboard() {
         </div>
 
         <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", marginBottom: 16 }}>
-          <Kpi label={t("cf.kpi.cash")} sub={t("cf.kpi.cash.sub")} value={fmtVnd(START_CASH)} accent={C.gold} icon={<Wallet size={16} />} />
+          <Kpi label={t("cf.kpi.cash")} sub={t("cf.kpi.cash.sub")} value={fmtVnd(ds.startCash)} accent={C.gold} icon={<Wallet size={16} />} />
           <Kpi label={t("cf.kpi.pneg")} sub={t("cf.kpi.pneg.sub", { sc: t("sc." + (sc.key || "base")) })} value={`${Math.round(sim.pNeg * 100)}%`} accent={rk.c} icon={<rk.Icon size={16} />} />
           <Kpi label={t("cf.kpi.trough")} sub={t("cf.kpi.trough.sub")} value={fmtVnd(sim.expMin)} accent={sim.expMin < 0 ? C.red : C.green} icon={<TrendingDown size={16} />} />
           <Kpi label={t("cf.kpi.worst")} sub={t("cf.kpi.worst.sub")} value={fmtVnd(sim.worstMin)} accent={sim.worstMin < 0 ? C.red : C.cyan} icon={<AlertTriangle size={16} />} />
@@ -343,7 +427,7 @@ function CashflowDashboard() {
               {sim.data.map((d) => <div key={d.idx} title={`${t("cf.week")} ${d.idx + 1}: ${Math.round(d.negShare * 100)}%`} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" }}><div style={{ height: `${Math.max(6, d.negShare * 100)}%`, background: heat(d.negShare, C), borderRadius: 3, transition: "height .4s, background .4s", outline: d.idx === sim.riskWeek && sim.pNeg >= 0.1 ? "1.5px solid #fff" : "none" }} /></div>)}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: C.sub, fontFamily: MONO }}><span>T1</span><span>T7</span><span>T13</span></div>
-            <div style={{ marginTop: "auto", paddingTop: 13 }}><Stat label={t("cf.riskWeek")} value={sim.pNeg >= 0.05 ? `${t("cf.week")} ${sim.riskWeek + 1} · ${RANGES[sim.riskWeek]}` : "—"} c={rk.c} /><Stat label={t("cf.evSelected")} value={fmtVnd(totalEV)} c={C.cyan} /></div>
+            <div style={{ marginTop: "auto", paddingTop: 13 }}><Stat label={t("cf.riskWeek")} value={sim.pNeg >= 0.05 ? `${t("cf.week")} ${sim.riskWeek + 1} · ${ds.ranges[sim.riskWeek]}` : "—"} c={rk.c} /><Stat label={t("cf.evSelected")} value={fmtVnd(totalEV)} c={C.cyan} /></div>
           </section>
         </div>
 
@@ -357,7 +441,7 @@ function CashflowDashboard() {
           </div>
           {plan && (
             <div style={{ marginTop: 14, padding: "13px 15px", borderRadius: 12, background: plan.feasible ? C.violetSoft : C.redSoft, border: `1px solid ${plan.feasible ? "rgba(169,139,255,.4)" : "rgba(255,82,105,.4)"}` }}>
-              {plan.feasible ? <><div style={{ fontWeight: 800, fontSize: 14, color: C.violet, marginBottom: 5 }}>✓ {t("cf.opt.call", { n: plan.count, names: plan.ids.map((id) => SHORT[id]).join(", ") })}</div><div style={{ fontSize: 13, color: C.sub }}>{t("cf.opt.from")} <b className="tnum" style={{ color: C.red }}>{Math.round(plan.before * 100)}%</b> ➜ <b className="tnum" style={{ color: C.green }}>{Math.round(plan.pNeg * 100)}%</b> {t("cf.opt.applied", { t: Math.round(target * 100) })}</div></> : <div style={{ fontSize: 13.3, color: C.red, fontWeight: 600 }}>⚠ {t("cf.opt.fail")} <b className="tnum">{Math.round(plan.pNeg * 100)}%</b> {t("cf.opt.failTail", { t: Math.round(target * 100) })}</div>}
+              {plan.feasible ? <><div style={{ fontWeight: 800, fontSize: 14, color: C.violet, marginBottom: 5 }}>✓ {t("cf.opt.call", { n: plan.count, names: plan.ids.map((id) => shortName(ds.recv.find((r) => r.id === id))).join(", ") })}</div><div style={{ fontSize: 13, color: C.sub }}>{t("cf.opt.from")} <b className="tnum" style={{ color: C.red }}>{Math.round(plan.before * 100)}%</b> ➜ <b className="tnum" style={{ color: C.green }}>{Math.round(plan.pNeg * 100)}%</b> {t("cf.opt.applied", { t: Math.round(target * 100) })}</div></> : <div style={{ fontSize: 13.3, color: C.red, fontWeight: 600 }}>⚠ {t("cf.opt.fail")} <b className="tnum">{Math.round(plan.pNeg * 100)}%</b> {t("cf.opt.failTail", { t: Math.round(target * 100) })}</div>}
             </div>
           )}
         </section>
@@ -367,7 +451,10 @@ function CashflowDashboard() {
           <div style={{ fontSize: 12.5, color: C.sub, margin: "4px 0 14px" }}>{t("cf.list.desc")}{sc.haircut > 0 && <b style={{ color: C.orange }}> {t("cf.list.scenario", { sc: t("sc." + (sc.key || "base")), p: Math.round(sc.haircut * 100) })}</b>}</div>
           <div style={{ overflowX: "auto" }}><div style={{ minWidth: 720 }}>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2.3fr) 86px 90px minmax(150px,1.4fr) 110px 78px", gap: 10, padding: "0 12px 8px", fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em" }}><span>{t("cf.col.customer")}</span><span style={{ textAlign: "right" }}>{t("cf.col.overdue")}</span><span style={{ textAlign: "right" }}>{t("cf.col.debt")}</span><span>{t("cf.col.prob")}</span><span style={{ textAlign: "right" }}>{t("cf.col.ev")}</span><span style={{ textAlign: "center" }}>{t("cf.col.collectW")}</span></div>
-            {RECV.map((r) => {
+            {ds.real && ds.recv.length === 0 && (
+              <div style={{ padding: "18px 12px", fontSize: 12.8, color: C.sub, textAlign: "center" }}>{t("cf.recv.empty")}</div>
+            )}
+            {ds.recv.map((r) => {
               const on = selected.has(r.id); const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); const ev = r.amount * pEff, w = Math.min(13, r.collectWeek + sc.delay + 1); const pc = pEff >= 0.8 ? C.green : pEff >= 0.6 ? C.gold : C.red;
               return (
                 <button key={r.id} onClick={() => toggle(r.id)} className="rowh" style={{ width: "100%", textAlign: "left", cursor: "pointer", display: "grid", gridTemplateColumns: "minmax(0,2.3fr) 86px 90px minmax(150px,1.4fr) 110px 78px", gap: 10, alignItems: "center", padding: "11px 12px", borderRadius: 12, marginBottom: 7, color: C.txt, background: on ? C.goldSoft : C.panel2, border: `1px solid ${on ? "rgba(245,184,61,.4)" : C.line}`, transition: "all .15s" }}>
@@ -401,20 +488,20 @@ function CashflowDashboard() {
 }
 
 /* ================= REPORT (white, print-ready A4) ================= */
-function Report({ sim, sc, selected, totalEV, onClose }) {
+function Report({ sim, sc, selected, totalEV, ds = DEMO_DS, onClose }) {
   const { t } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
   const fmtVnd = (m) => fmtMoneyM(m, currency);
   const fmtTr = (m) => fmtCompactM(m, currency);
   const rk = riskLevel(sim.pNeg, L);
-  const sel = RECV.filter((r) => selected.has(r.id));
+  const sel = ds.recv.filter((r) => selected.has(r.id));
   const yMin = Math.min(0, ...sim.data.map((d) => d.p10)); const yMax = Math.max(START_CASH, ...sim.data.map((d) => d.p90));
   const today = new Date().toLocaleDateString();
   const scName = sc.key === "custom" ? t("cf.custom") : t("sc." + sc.key);
   const verdict = sim.pNeg < 0.10
     ? t("rp.verdict.safe", { sc: scName, p: Math.round(sim.pNeg * 100), min: fmtVnd(sim.expMin) })
-    : t("rp.verdict.risk", { sc: scName, p: Math.round(sim.pNeg * 100), lvl: t(RK_LABEL[rk.key]), w: sim.riskWeek + 1, range: RANGES[sim.riskWeek], min: fmtVnd(sim.expMin), worst: fmtVnd(sim.worstMin), n: sel.length, ev: fmtVnd(totalEV) });
+    : t("rp.verdict.risk", { sc: scName, p: Math.round(sim.pNeg * 100), lvl: t(RK_LABEL[rk.key]), w: sim.riskWeek + 1, range: ds.ranges[sim.riskWeek], min: fmtVnd(sim.expMin), worst: fmtVnd(sim.worstMin), n: sel.length, ev: fmtVnd(totalEV) });
 
   return (
     <div style={{ background: "#5b6376", minHeight: "100vh", fontFamily: UI, padding: "0 0 40px" }}>
@@ -445,7 +532,7 @@ function Report({ sim, sc, selected, totalEV, onClose }) {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: L.sub, margin: "10px 0 4px" }}>
             <span><b style={{ color: L.ink }}>{t("rp.company")}</b> {COMPANY}</span>
-            <span className="tnum"><b style={{ color: L.ink }}>{t("rp.period")}</b> {RANGES[0].split("–")[0]}/06 – {RANGES[12].split("–")[1]}/08/2026 (13 {t("cf.weeks")})</span>
+            <span className="tnum"><b style={{ color: L.ink }}>{t("rp.period")}</b> {ds.ranges[0].split("–")[0]} – {ds.ranges[12].split("–")[1]} (13 {t("cf.weeks")})</span>
           </div>
 
           {/* risk summary */}
@@ -498,7 +585,7 @@ function Report({ sim, sc, selected, totalEV, onClose }) {
                 {[t("rp.th.customer"), t("rp.th.acc"), t("rp.th.debt"), t("rp.th.overdue"), t("rp.th.prob"), t("rp.th.ev"), t("rp.th.week"), t("rp.th.plan")].map((h, i) => <th key={i} style={{ padding: "7px 9px", textAlign: i === 0 ? "left" : i >= 2 && i <= 5 ? "right" : "center", fontSize: 10.5, fontWeight: 700 }}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {RECV.map((r, idx) => { const on = selected.has(r.id); const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); const pc = pEff >= 0.8 ? L.green : pEff >= 0.6 ? L.gold : L.red;
+                {ds.recv.map((r, idx) => { const on = selected.has(r.id); const pEff = clamp(r.p * (1 - sc.haircut), 0, 0.99); const pc = pEff >= 0.8 ? L.green : pEff >= 0.6 ? L.gold : L.red;
                   return (<tr key={r.id} style={{ background: on ? "rgba(197,137,27,.09)" : idx % 2 ? L.soft : "#fff", borderBottom: `1px solid ${L.hair}` }}>
                     <td style={{ padding: "7px 9px", fontWeight: 600 }}>{r.name}{r.ai && <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 800, color: L.gold, border: `1px solid ${L.gold}`, borderRadius: 4, padding: "1px 4px" }}>AI</span>}</td>
                     <td className="tnum" style={{ padding: "7px 9px", color: L.sub }}>{r.code}</td>
@@ -1401,13 +1488,15 @@ function tierCol(days) {
   return { key: "gentle", labelKey: "col.tier.gentle", c: C_COL.gold, soft: C_COL.goldSoft };
 }
 
-/* AI-drafted message templates per channel & tone */
-function draftCol(r, channel, currency = "VND") {
+/* AI-drafted message templates per channel & tone.
+   forceEn: hồ sơ công ty ngoài Việt Nam → mọi tin nhắc nợ đều tiếng Anh,
+   không còn phân biệt "doanh nghiệp nước ngoài" theo từng con nợ. */
+function draftCol(r, channel, currency = "VND", forceEn = false) {
   const tier = tierCol(r.days);
   const cty = r.name;
 
-  // English templates for foreign businesses
-  if (r.lang === "en") {
+  // English templates (foreign debtor của công ty VN, hoặc toàn bộ với công ty ngoài VN)
+  if (forceEn || r.lang === "en") {
     const amtEn = fmtCompactM(r.amount, currency);
     if (channel === "email") {
       if (tier.key === "gentle") return {
@@ -1471,6 +1560,7 @@ function DebtCollect() {
   const { t } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
+  const isVnCompany = (company?.country || "VN") === "VN"; // ngoài VN → nhắc nợ toàn tiếng Anh
   const fmtTr_COL = (m) => fmtCompactM(m, currency);
   const [sel, setSel] = useState(DEBTORS_COL[0].id);
   const [channel, setChannel] = useState("email");
@@ -1485,7 +1575,7 @@ function DebtCollect() {
   const debtors = DEBTORS_COL.map((r) => ({ ...r, p: recoverP_COL(r), tier: tierCol(r.days) }))
     .sort((a, b) => b.days - a.days);
   const cur = debtors.find((r) => r.id === sel);
-  const msg = draftCol(cur, channel, currency);
+  const msg = draftCol(cur, channel, currency, !isVnCompany);
   const markSent = () => setSent((s) => new Set(s).add(cur.id + ":" + channel));
   const isSent = sent.has(cur.id + ":" + channel);
 
@@ -1526,7 +1616,7 @@ function DebtCollect() {
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           <div style={{ fontWeight: 700, fontSize: 12.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
-                          {r.lang === "en" && <span style={{ flex: "0 0 auto", fontSize: 9, fontWeight: 800, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "1px 5px", borderRadius: 4 }}>EN</span>}
+                          {isVnCompany && r.lang === "en" && <span style={{ flex: "0 0 auto", fontSize: 9, fontWeight: 800, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "1px 5px", borderRadius: 4 }}>EN</span>}
                         </div>
                         <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2 }}>{r.code} · {t("col.overdue", { d: r.days })}</div>
                       </div>
@@ -1552,7 +1642,7 @@ function DebtCollect() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{ fontFamily: DISP_COL, fontWeight: 700, fontSize: 16 }}>{cur.name}</div>
-                  {cur.lang === "en" && <span style={{ fontSize: 10, fontWeight: 800, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "2px 8px", borderRadius: 6 }}>🌐 {t("col.foreign")}</span>}
+                  {isVnCompany && cur.lang === "en" && <span style={{ fontSize: 10, fontWeight: 800, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "2px 8px", borderRadius: 6 }}>🌐 {t("col.foreign")}</span>}
                 </div>
                 <div style={{ fontSize: 11.8, color: C_COL.sub, marginTop: 2 }}>{cur.contact} · {t("col.overdue", { d: cur.days })} · {fmtTr_COL(cur.amount)}</div>
               </div>
@@ -1989,7 +2079,7 @@ function PricingPlans() {
                   <div style={{ width: 40, height: 40, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: `linear-gradient(135deg, ${C_PR.cyan}, #2E9BD6)` }}><Wallet size={21} color="#06202f" strokeWidth={2.3} /></div>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <h3Pr style={h3Pr}>{t("pr.base.name")}</h3Pr>
+                      <h3 style={h3Pr}>{t("pr.base.name")}</h3>
                       <span style={{ fontSize: 10.5, fontWeight: 800, color: C_PR.cyan, background: C_PR.cyanSoft, padding: "2px 8px", borderRadius: 6 }}>{t("pr.base.tag")}</span>
                     </div>
                     <div style={{ fontSize: 12.3, color: C_PR.sub, marginTop: 3 }}>{t("pr.base.desc")}</div>
@@ -2034,7 +2124,7 @@ function PricingPlans() {
 
             {/* add-on agents */}
             <section className="card" style={panelPr}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Plus size={17} color={C_PR.gold} /><h3Pr style={h3Pr}>{t("pr.addon.title")}</h3Pr></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Plus size={17} color={C_PR.gold} /><h3 style={h3Pr}>{t("pr.addon.title")}</h3></div>
               <div style={{ fontSize: 12.3, color: C_PR.sub, margin: "4px 0 14px" }}>{t("pr.addon.desc")}</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {AGENTS_PR.map((a) => {
@@ -2086,7 +2176,7 @@ function PricingPlans() {
             <section className="card" style={{ ...panel, position: "sticky", top: 16, border: `1px solid ${stageColor}55` }}>
               <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 4 }}>
                 <StageIcon size={18} color={stageColor} />
-                <h3Pr style={h3Pr}>{t("pr.your.plan")}</h3Pr>
+                <h3 style={h3Pr}>{t("pr.your.plan")}</h3>
                 <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: stageColor, background: stageColor + "1f", padding: "3px 11px", borderRadius: 20 }}>{stageName}</span>
               </div>
 
@@ -2266,36 +2356,72 @@ function parseInvoices_INV(aoa) {
   return { lines, colIndex, headerRow: hr };
 }
 
-/* TT200 journal entries for a sales-invoice line */
-function classify_INV(ln) {
+/* Tài khoản ghi Nợ theo hình thức thanh toán trên hóa đơn:
+   TM (thu tiền mặt ngay) → 111 · CK (chuyển khoản ngay) → 112 · trống/công nợ/"TM/CK" → 131 */
+function debitLine_INV(ln, standard) {
+  const p = String(ln.pay || "").trim().toLowerCase();
+  const isCash = /^(tm|tiền mặt|tien mat|cash)$/.test(p);
+  const isBank = /^(ck|chuyển khoản|chuyen khoan|bank|transfer)$/.test(p);
+  const vas = standard !== "IFRS";
+  if (isCash) return { acc: vas ? "111" : "1000", nameKey: "inv.entry.cash", nameVars: {} };
+  if (isBank) return { acc: vas ? "112" : "1100", nameKey: "inv.entry.bank", nameVars: {} };
+  return {
+    acc: vas ? "131" : "1200",
+    nameKey: vas ? "inv.entry.receivable" : "inv.entry.receivable.ifrs",
+    nameVars: { buyer: ln.buyer ? " · " + ln.buyer : "" },
+  };
+}
+/* Bút toán VAS (TT200) cho 1 dòng hóa đơn bán ra.
+   Khi có chiết khấu dùng TK 521 thì doanh thu 511 ghi GỘP (chưa trừ CK) để bút toán cân:
+   Nợ (total + ck) = Có (amount + vat). */
+export function classify_INV(ln) {
   const e = [];
-  e.push({ acc: "131", side: "Nợ", nameKey: "inv.entry.receivable", nameVars: { buyer: ln.buyer ? " · " + ln.buyer : "" }, amount: ln.total, c: C_INV.green });
-  if (ln.ck > 0) e.push({ acc: "521", side: "Nợ", nameKey: "inv.entry.discount", amount: ln.ck, c: C_INV.orange });
-  e.push({ acc: "511", side: "Có", nameKey: "inv.entry.revenue", amount: ln.net, c: C_INV.cyan });
+  const d = debitLine_INV(ln, "VAS");
+  e.push({ acc: d.acc, side: "Nợ", nameKey: d.nameKey, nameVars: d.nameVars, amount: ln.total, c: C_INV.green });
+  if (ln.ck > 0) {
+    e.push({ acc: "521", side: "Nợ", nameKey: "inv.entry.discount", amount: ln.ck, c: C_INV.orange });
+    e.push({ acc: "511", side: "Có", nameKey: "inv.entry.revenue", amount: ln.amount, c: C_INV.cyan });
+  } else {
+    e.push({ acc: "511", side: "Có", nameKey: "inv.entry.revenue", amount: ln.net, c: C_INV.cyan });
+  }
   if (ln.vat > 0) e.push({ acc: "3331", side: "Có", nameKey: "inv.entry.vatOut", nameVars: { rate: ln.vatRate || 0 }, amount: ln.vat, c: C_INV.violet });
   return e;
 }
-/* Cùng bút toán, mã tài khoản/nhãn theo IFRS — dùng cho công ty accountingStandard === "IFRS" */
-function classifyIFRS_INV(ln) {
+/* Bút toán IFRS 15 — chiết khấu thương mại là variable consideration, trừ thẳng vào
+   doanh thu (không có tài khoản contra kiểu 521): Dr AR/Cash = total · Cr Revenue = net · Cr VAT. */
+export function classifyIFRS_INV(ln) {
   const e = [];
-  e.push({ acc: "1200", side: "Nợ", nameKey: "inv.entry.receivable.ifrs", nameVars: { buyer: ln.buyer ? " · " + ln.buyer : "" }, amount: ln.total, c: C_INV.green });
-  if (ln.ck > 0) e.push({ acc: "4100", side: "Nợ", nameKey: "inv.entry.discount", amount: ln.ck, c: C_INV.orange });
-  e.push({ acc: "4000", side: "Có", nameKey: "inv.entry.revenue", amount: ln.net, c: C_INV.cyan });
+  const d = debitLine_INV(ln, "IFRS");
+  e.push({ acc: d.acc, side: "Nợ", nameKey: d.nameKey, nameVars: d.nameVars, amount: ln.total, c: C_INV.green });
+  e.push({ acc: "4000", side: "Có", nameKey: "inv.entry.revenue.ifrs", amount: ln.net, c: C_INV.cyan });
   if (ln.vat > 0) e.push({ acc: "2300", side: "Có", nameKey: "inv.entry.vatOut.ifrs", nameVars: { rate: ln.vatRate || 0 }, amount: ln.vat, c: C_INV.violet });
   return e;
 }
 /* anomaly checks per line — standard: "VAS" | "IFRS" (mã số thuế VN có định dạng riêng, không áp cho công ty nước ngoài) */
-function checkLine_INV(ln, standard = "VAS") {
+export function checkLine_INV(ln, standard = "VAS") {
   const out = [];
-  const calcNet = Math.round(ln.amount - ln.ck);
+  const fmtN = (n) => Math.round(n).toLocaleString("vi-VN");
+  // 1. cân đối tổng thanh toán
   const calcTotal = Math.round(ln.net + ln.vat);
-  out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, labelKey: "inv.check.totalMatch", v: `${calcTotal.toLocaleString("vi-VN")} ≈ ${Math.round(ln.total).toLocaleString("vi-VN")}` });
+  out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, labelKey: "inv.check.totalMatch", v: `${fmtN(calcTotal)} ≈ ${fmtN(ln.total)}` });
+  // 2. mã số thuế người mua
   if (standard === "IFRS") {
     out.push({ ok: !!ln.buyerTax, labelKey: "inv.check.taxIdProvided", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
   } else {
     out.push({ ok: /^\d{10}(-\d{3})?$/.test(ln.buyerTax), labelKey: "inv.check.taxIdValid", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
   }
-  out.push({ ok: ln.vatRate > 0, labelKey: "inv.check.hasVatRate", v: ln.vatRate ? ln.vatRate + "%" : "", vKey: ln.vatRate ? null : "inv.check.empty" });
+  // 3. thuế suất hợp lệ — 0% (xuất khẩu) là hợp lệ; VN: 0/5/8/10
+  const rate = Number(ln.vatRate) || 0;
+  const rateOk = standard === "IFRS" ? rate >= 0 && rate <= 30 : [0, 5, 8, 10].includes(Math.round(rate));
+  out.push({ ok: rateOk, labelKey: standard === "IFRS" ? "inv.check.vatRatePlausible" : "inv.check.vatRateValid", v: rate + "%" });
+  // 4. tiền thuế = tiền hàng sau CK × thuế suất (±2đ sai số làm tròn)
+  const calcVat = Math.round(ln.net * rate / 100);
+  out.push({ ok: Math.abs(calcVat - Math.round(ln.vat)) <= 2, labelKey: "inv.check.vatCalc", v: `${fmtN(calcVat)} ≈ ${fmtN(ln.vat)}` });
+  // 5. thành tiền = SL × đơn giá (chỉ kiểm khi hóa đơn có đủ 2 cột)
+  if (ln.qty > 0 && ln.price > 0) {
+    const calcAmt = Math.round(ln.qty * ln.price);
+    out.push({ ok: Math.abs(calcAmt - Math.round(ln.amount)) <= 1, labelKey: "inv.check.lineAmount", v: `${fmtN(calcAmt)} ≈ ${fmtN(ln.amount)}` });
+  }
   return out;
 }
 
@@ -2346,27 +2472,60 @@ const STAGES_INV = [
 ];
 
 function InvoiceProcess_INV() {
-  const { t } = useT();
+  const { t, i18n: i18nInst } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
   const standard = company?.accountingStandard || "VAS";
+  const lang = (i18nInst.language || "vi").startsWith("vi") ? "vi" : "en";
   const fmtVnd_INV = (n) => fmtMoney(n, currency);
   const fmtTr_INV = (n) => fmtMoneyCompactM(n, currency);
+  const [, setAccTick] = useState(0);
+
+  // hệ tài khoản (VAS + IFRS) từ bảng accounts — nạp 1 lần, render lại khi về
+  useEffect(() => {
+    loadAccounts();
+    const h = () => setAccTick((v) => v + 1);
+    window.addEventListener("accounts-loaded", h);
+    return () => window.removeEventListener("accounts-loaded", h);
+  }, []);
+
+  // tên tài khoản: ưu tiên bảng accounts theo chuẩn + ngôn ngữ, fallback chuỗi i18n có sẵn
+  const entryName = (r) => {
+    const n = accountName(standard, r.acc, lang);
+    if (!n) return t(r.nameKey, r.nameVars);
+    const extra = r.nameVars?.buyer || (r.nameVars?.rate != null ? ` (${r.nameVars.rate}%)` : "");
+    return n + extra;
+  };
   const [lines, setLines] = useState(null);
   const [meta, setMeta] = useState({ name: "", headerRow: -1, cols: 0, mapped: 0 });
   const [stage, setStage] = useState(-1);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
   const [sel, setSel] = useState(0);
+  const [uploads, setUploads] = useState([]);
+  const [showHist, setShowHist] = useState(false);
+  const [loadedUpId, setLoadedUpId] = useState(null);
   const fileRef = useRef(null);
   const timer = useRef(null);
 
+  const refreshUploads = () => {
+    if (company?.id) listInvoiceUploads(company.id).then(setUploads).catch(() => setUploads([]));
+    else setUploads([]);
+  };
+
   useEffect(() => () => clearInterval(timer.current), []);
 
-  // khôi phục lần upload gần nhất từ Supabase (nếu có)
+  // khôi phục lần upload gần nhất CỦA HỒ SƠ CÔNG TY đang dùng — đổi hồ sơ là reset,
+  // hồ sơ mới chưa có dữ liệu thì lịch sử trống
   useEffect(() => {
     let alive = true;
-    loadLatestInvoiceUpload()
+    clearInterval(timer.current);
+    setLines(null); setErr(""); setStage(-1); setRunning(false); setSel(0);
+    setMeta({ name: "", headerRow: -1, cols: 0, mapped: 0 });
+    setUploads([]); setShowHist(false); setLoadedUpId(null);
+    if (!company?.id) return;
+    refreshUploads();
+    loadLatestInvoiceUpload(company.id)
       .then((saved) => {
         if (!alive || !saved || !saved.lines.length) return;
         setLines((cur) => {
@@ -2374,12 +2533,38 @@ function InvoiceProcess_INV() {
           setMeta({ name: saved.meta.name, headerRow: saved.meta.headerRow, cols: saved.meta.cols, mapped: saved.meta.mapped });
           setSel(0);
           setStage(STAGES_INV.length); // pipeline coi như đã chạy xong
+          setLoadedUpId(saved.id);
           return saved.lines;
         });
       })
       .catch((ex) => console.warn("Supabase load:", ex.message));
     return () => { alive = false; };
-  }, []);
+  }, [company?.id]);
+
+  // mở lại 1 lần upload trong lịch sử
+  const openUpload = (u) => {
+    clearInterval(timer.current); setRunning(false); setErr("");
+    loadInvoiceUpload(u.id)
+      .then((saved) => {
+        if (!saved || !saved.lines.length) return;
+        setLines(saved.lines);
+        setMeta({ name: saved.meta.name, headerRow: saved.meta.headerRow, cols: saved.meta.cols, mapped: saved.meta.mapped });
+        setSel(0); setStage(STAGES_INV.length); setLoadedUpId(saved.id);
+      })
+      .catch((ex) => setErr(t("inv.err.read") + ex.message));
+  };
+
+  const removeUpload = (u) => {
+    deleteInvoiceUpload(u.id)
+      .then(() => {
+        refreshUploads();
+        if (loadedUpId === u.id) {
+          setLines(null); setStage(-1); setSel(0); setLoadedUpId(null);
+          setMeta({ name: "", headerRow: -1, cols: 0, mapped: 0 });
+        }
+      })
+      .catch((ex) => setErr(ex.message));
+  };
 
   const onFile = (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
@@ -2396,7 +2581,12 @@ function InvoiceProcess_INV() {
         const m = { name: f.name, headerRow: headerRow + 1, cols: (aoa[headerRow] || []).length, mapped: Object.keys(colIndex).length };
         setMeta(m);
         runPipeline();
-        saveInvoiceUpload(f.name, m, ls).catch((ex) => console.warn("Supabase save:", ex.message));
+        saveInvoiceUpload(f.name, m, ls, company?.id)
+          .then((id) => { setLoadedUpId(id); refreshUploads(); })
+          .catch((ex) => console.warn("Supabase save:", ex.message));
+        // hóa đơn bán chịu → tự sinh khoản phải thu cho module Dòng tiền (hạn +30 ngày)
+        addReceivablesFromInvoiceLines(company?.id, ls)
+          .catch((ex) => console.warn("Receivables from invoice:", ex.message));
       } catch (ex) { setErr(t("inv.err.read") + ex.message); setLines(null); }
     };
     reader.readAsArrayBuffer(f);
@@ -2448,10 +2638,40 @@ function InvoiceProcess_INV() {
           </div>
           <div style={{ display: "flex", gap: 9 }}>
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFile} style={{ display: "none" }} />
+            {uploads.length > 0 && (
+              <button className="btn" onClick={() => setShowHist((v) => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 15px", borderRadius: 10, fontWeight: 700, fontSize: 12.5, color: showHist ? C_INV.gold : C_INV.sub, background: "rgba(255,255,255,.05)", border: `1px solid ${showHist ? C_INV.gold + "66" : C_INV.line}` }}>
+                <Clock size={15} />{t("inv.history.button")} · {uploads.length}
+              </button>
+            )}
             <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13.5, color: "#06251a", background: `linear-gradient(135deg, ${C_INV.green}, #1FA877)` }}><FileSpreadsheet size={16} />{t("inv.upload")}</button>
             {lines && <button className="btn" onClick={reset} title={t("inv.reset")} style={{ display: "grid", placeItems: "center", width: 40, height: 40, borderRadius: 10, color: C_INV.sub, background: "rgba(255,255,255,.05)", border: `1px solid ${C_INV.line}` }}><RotateCcw size={16} /></button>}
           </div>
         </header>
+
+        {/* history: các lần upload của hồ sơ công ty đang dùng */}
+        {showHist && (
+          <div className="card" style={{ ...panelInv, padding: "13px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Clock size={15} color={C_INV.gold} />
+              <span style={{ fontWeight: 700, fontSize: 13 }}>{t("inv.history.title")}</span>
+              <span style={{ fontSize: 11, color: C_INV.sub }}>{t("inv.history.scope")}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {uploads.map((u) => {
+                const isCur = u.id === loadedUpId;
+                return (
+                  <div key={u.id} className="rowh" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", borderRadius: 10, cursor: "pointer", background: isCur ? C_INV.gold + "14" : C_INV.panel2, border: `1px solid ${isCur ? C_INV.gold + "55" : C_INV.line}` }} onClick={() => openUpload(u)}>
+                    <FileSpreadsheet size={15} color={isCur ? C_INV.gold : C_INV.sub} style={{ flex: "0 0 auto" }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.fileName}</span>
+                    <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{t("inv.history.lines", { n: u.lineCount })}</span>
+                    <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{new Date(u.createdAt).toLocaleString(lang === "vi" ? "vi-VN" : "en-US", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                    <button className="btn" title={t("inv.history.delete")} onClick={(e) => { e.stopPropagation(); removeUpload(u); }} style={{ display: "grid", placeItems: "center", width: 26, height: 26, borderRadius: 7, color: C_INV.red, background: "transparent", border: "none" }}><X size={14} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* empty state */}
         {!lines && (
@@ -2534,7 +2754,7 @@ function InvoiceProcess_INV() {
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: C_INV.panel2, border: `1px solid ${C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 15, fontWeight: 800, color: r.c, width: 42 }}>{r.acc}</span>
                       <span style={{ fontSize: 9.5, fontWeight: 800, color: r.side === "Nợ" ? C_INV.cyan : C_INV.orange, background: (r.side === "Nợ" ? C_INV.cyan : C_INV.orange) + "1f", padding: "2px 7px", borderRadius: 6, width: 32, textAlign: "center" }}>{r.side === "Nợ" ? t("inv.side.no") : t("inv.side.co")}</span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(r.nameKey, r.nameVars)}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{entryName(r)}</span>
                       <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{fmtVnd_INV(r.amount)}</span>
                     </div>
                   ))}
@@ -2631,10 +2851,10 @@ function useT() { return useTranslation(); }
 
 const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
-  { id: "fpa", key: "fpa", icon: Brain, c: C.cyan },
-  { id: "ops", key: "ops", icon: Bot, c: C.green },
-  { id: "credit", key: "credit", icon: Gauge, c: C.violet },
-  { id: "collect", key: "collect", icon: Bell, c: C.orange },
+  { id: "fpa", key: "fpa", icon: Brain, c: C.cyan, demo: true },
+  { id: "ops", key: "ops", icon: Bot, c: C.green, demo: true },
+  { id: "credit", key: "credit", icon: Gauge, c: C.violet, demo: true },
+  { id: "collect", key: "collect", icon: Bell, c: C.orange, demo: true },
   { id: "invoice", key: "invoice", icon: Receipt, c: C.green },
   { id: "pricing", key: "pricing", icon: TagIcon, c: C.cyan },
 ];
@@ -2651,6 +2871,8 @@ function AppShell() {
   const { t, i18n: i18nInst } = useT();
   const lang = i18nInst.language;
   const setLang = setLanguage;
+  const { company } = useCompany();
+  const isVnCompany = (company?.country || "VN") === "VN"; // ngoài VN: UI ép tiếng Anh, ẩn nút VI/EN
   const [page, setPage] = useState("cashflow");
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
@@ -2738,7 +2960,10 @@ function AppShell() {
                 style={{ display: "flex", alignItems: "center", gap: 12, padding: collapsed ? "11px 0" : "10px 12px", justifyContent: collapsed ? "center" : "flex-start", borderRadius: 11, background: on ? n.c + "1c" : "transparent", borderLeft: on && !collapsed ? `3px solid ${n.c}` : "3px solid transparent" }}>
                 <Ic size={19} color={on ? n.c : C.sub} style={{ flex: "0 0 auto" }} />
                 {!collapsed && <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: on ? 700 : 600, color: on ? C.txt : C.sub, whiteSpace: "nowrap" }}>{t("nav." + n.key)}</div>
+                  <div style={{ fontSize: 13, fontWeight: on ? 700 : 600, color: on ? C.txt : C.sub, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+                    {t("nav." + n.key)}
+                    {!DEMO_MODE && n.demo && <span style={{ flex: "0 0 auto", fontSize: 8, fontWeight: 800, padding: "1px 5px", borderRadius: 4, letterSpacing: ".04em", color: C.gold, background: C.goldSoft, border: `1px solid ${C.gold}44` }}>DEMO</span>}
+                  </div>
                   <div style={{ fontSize: 10.3, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t("nav." + n.key + ".desc")}</div>
                 </div>}
               </button>
@@ -2761,11 +2986,13 @@ function AppShell() {
             <div style={{ fontSize: 11.5, color: C.sub }}>{t("nav." + active.key + ".desc")}</div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: `1px solid ${C.line}` }}>
-              {["vi", "en"].map((lg) => (
-                <button key={lg} onClick={() => setLang(lg)} style={{ cursor: "pointer", border: "none", padding: "6px 11px", fontSize: 11.5, fontWeight: 800, fontFamily: UI, color: lang === lg ? "#06121f" : C.sub, background: lang === lg ? C.cyan : "transparent" }}>{lg.toUpperCase()}</button>
-              ))}
-            </div>
+            {isVnCompany && (
+              <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: `1px solid ${C.line}` }}>
+                {["vi", "en"].map((lg) => (
+                  <button key={lg} onClick={() => setLang(lg)} style={{ cursor: "pointer", border: "none", padding: "6px 11px", fontSize: 11.5, fontWeight: 800, fontFamily: UI, color: lang === lg ? "#06121f" : C.sub, background: lang === lg ? C.cyan : "transparent" }}>{lg.toUpperCase()}</button>
+                ))}
+              </div>
+            )}
             <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "6px 12px", borderRadius: 20 }}>
               <span style={{ width: 7, height: 7, borderRadius: 9, background: C.green }} />{t("app.status")}
             </span>
