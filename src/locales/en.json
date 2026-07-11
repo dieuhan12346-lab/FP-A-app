@@ -86,6 +86,7 @@
   "cf.data.subtitle": "Enter opening cash, receivables (customer debts) and payables (payroll, rent, suppliers…). With at least 1 row, the forecast switches to live data.",
   "cf.data.opening": "Opening cash balance",
   "cf.data.save": "Save",
+  "cf.data.saved": "Saved",
   "cf.data.recv": "Receivables",
   "cf.data.recv.empty": "No receivables yet — add below, or upload credit-sale invoices in Invoice Reader.",
   "cf.data.pay": "Payables",

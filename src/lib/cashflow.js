@@ -2,6 +2,12 @@ import { supabase } from "./supabase";
 
 /* ---- Dòng tiền thật: phải thu / phải chi / số dư đầu kỳ (theo từng công ty) ---- */
 
+/** Bản dựng thiếu VITE_SUPABASE_URL/ANON_KEY (vd Vercel Preview chưa tick env) → báo rõ thay vì vỡ. */
+function db() {
+  if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase — kiểm tra biến môi trường VITE_SUPABASE_URL và VITE_SUPABASE_ANON_KEY cho môi trường đang chạy (Production/Preview).");
+  return supabase;
+}
+
 const mapRecv = (r) => ({
   id: r.id, customer: r.customer, amount: Number(r.amount) || 0,
   dueDate: r.due_date, status: r.status, source: r.source, invoiceNo: r.invoice_no || "",
@@ -29,40 +35,44 @@ export async function fetchCashflowData(companyId) {
 }
 
 export async function addReceivable(companyId, { customer, amount, dueDate }) {
-  const { error } = await supabase.from("receivables")
+  const { error } = await db().from("receivables")
     .insert({ company_id: companyId, customer, amount, due_date: dueDate });
   if (error) throw error;
 }
 
 export async function addPayable(companyId, { label, amount, dueDate }) {
-  const { error } = await supabase.from("payables")
+  const { error } = await db().from("payables")
     .insert({ company_id: companyId, label, amount, due_date: dueDate });
   if (error) throw error;
 }
 
 export async function setReceivableStatus(id, status) {
-  const { error } = await supabase.from("receivables").update({ status }).eq("id", id);
+  const { error } = await db().from("receivables").update({ status }).eq("id", id);
   if (error) throw error;
 }
 
 export async function setPayableStatus(id, status) {
-  const { error } = await supabase.from("payables").update({ status }).eq("id", id);
+  const { error } = await db().from("payables").update({ status }).eq("id", id);
   if (error) throw error;
 }
 
 export async function deleteReceivable(id) {
-  const { error } = await supabase.from("receivables").delete().eq("id", id);
+  const { error } = await db().from("receivables").delete().eq("id", id);
   if (error) throw error;
 }
 
 export async function deletePayable(id) {
-  const { error } = await supabase.from("payables").delete().eq("id", id);
+  const { error } = await db().from("payables").delete().eq("id", id);
   if (error) throw error;
 }
 
 export async function saveOpeningCash(companyId, openingCash) {
-  const { error } = await supabase.from("cashflow_settings")
-    .upsert({ company_id: companyId, opening_cash: openingCash, updated_at: new Date().toISOString() });
+  if (!companyId) throw new Error("Chưa xác định được hồ sơ công ty — tải lại trang rồi thử lại");
+  const { error } = await db().from("cashflow_settings")
+    .upsert(
+      { company_id: companyId, opening_cash: openingCash, updated_at: new Date().toISOString() },
+      { onConflict: "company_id" }
+    );
   if (error) throw error;
 }
 
@@ -83,7 +93,7 @@ export async function addReceivablesFromInvoiceLines(companyId, lines) {
       invoice_no: l.no || "",
     }));
   if (!rows.length) return 0;
-  const { error } = await supabase.from("receivables").insert(rows);
+  const { error } = await db().from("receivables").insert(rows);
   if (error) throw error;
   return rows.length;
 }

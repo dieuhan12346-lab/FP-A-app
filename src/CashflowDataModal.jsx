@@ -25,10 +25,14 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
     catch (ex) { setErr(ex.message); }
   };
 
-  const saveOpening = () => run(async () => {
-    setSavingOpen(true);
-    try { await saveOpeningCash(companyId, Number(opening) || 0); } finally { setSavingOpen(false); }
-  });
+  const [openSaved, setOpenSaved] = useState(false);
+  const saveOpening = () => {
+    setErr(""); setOpenSaved(false); setSavingOpen(true);
+    saveOpeningCash(companyId, Number(opening) || 0)
+      .then(() => { setOpenSaved(true); onChanged(); setTimeout(() => setOpenSaved(false), 2500); })
+      .catch((ex) => setErr(ex.message))
+      .finally(() => setSavingOpen(false));
+  };
 
   const addR = () => {
     if (!rForm.customer.trim() || !rForm.amount || !rForm.dueDate) { setErr(t("cf.data.err.fill")); return; }
@@ -77,13 +81,16 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
         </div>
         <div style={{ fontSize: 12, color: C.sub, marginBottom: 18, lineHeight: 1.5 }}>{t("cf.data.subtitle")}</div>
 
+        {err && <div style={{ marginBottom: 14, padding: "9px 13px", borderRadius: 9, fontSize: 12.5, color: C.red, background: C.red + "14", border: `1px solid ${C.red}44` }}>⚠ {err}</div>}
+
         {/* Số dư đầu kỳ */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
           <Wallet size={15} color={C.gold} />
           <span style={{ fontSize: 13, fontWeight: 700 }}>{t("cf.data.opening")}</span>
           <input className="tnum" type="number" min="0" step="1000000" value={opening} onChange={(e) => setOpening(e.target.value)} style={{ ...inp, width: 180, textAlign: "right" }} />
           <span style={{ fontSize: 11, color: C.sub }}>₫</span>
-          <button onClick={saveOpening} disabled={savingOpen} style={{ padding: "8px 16px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: "#06251a", background: C.green, opacity: savingOpen ? 0.6 : 1, fontFamily: "inherit" }}>{t("cf.data.save")}</button>
+          <button onClick={saveOpening} disabled={savingOpen} style={{ padding: "8px 16px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: "#06251a", background: C.green, opacity: savingOpen ? 0.6 : 1, fontFamily: "inherit" }}>{savingOpen ? "…" : t("cf.data.save")}</button>
+          {openSaved && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: C.green }}><Check size={13} />{t("cf.data.saved")}</span>}
         </div>
 
         {/* Phải thu */}
@@ -120,7 +127,6 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
           <button onClick={addP} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 9, border: `1px dashed ${C.red}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, color: C.red, background: "transparent", fontFamily: "inherit" }}><Plus size={13} />{t("cf.data.add")}</button>
         </div>
 
-        {err && <div style={{ marginTop: 14, fontSize: 12.5, color: C.red }}>{err}</div>}
         <div style={{ marginTop: 16, fontSize: 11, color: C.sub, lineHeight: 1.55 }}>{t("cf.data.note")}</div>
       </div>
     </div>,
