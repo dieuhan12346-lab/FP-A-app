@@ -158,6 +158,11 @@ create table if not exists public.payables (
   created_at timestamptz not null default now()
 );
 
+-- Loại chi → tài khoản trong khối "Phân loại theo TT200":
+-- supplier→331 · payroll→334 · tax→333 · other→642
+alter table public.payables
+  add column if not exists category text not null default 'other';
+
 create table if not exists public.cashflow_settings (
   company_id   uuid primary key references public.companies(id) on delete cascade,
   user_id      uuid not null default auth.uid() references auth.users(id) on delete cascade,

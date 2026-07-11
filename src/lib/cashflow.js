@@ -14,12 +14,13 @@ const mapRecv = (r) => ({
 });
 const mapPay = (p) => ({
   id: p.id, label: p.label, amount: Number(p.amount) || 0,
-  dueDate: p.due_date, status: p.status,
+  dueDate: p.due_date, status: p.status, category: p.category || "other",
 });
 
-/** Toàn bộ dữ liệu dòng tiền của 1 công ty. hasReal = có ít nhất 1 bản ghi thật. */
+/** Toàn bộ dữ liệu dòng tiền của 1 công ty. hasReal = có ít nhất 1 bản ghi thật.
+ *  invoiceLines: các dòng hóa đơn đã upload của công ty — nguồn cho khối phân loại TT200. */
 export async function fetchCashflowData(companyId) {
-  if (!supabase || !companyId) return { receivables: [], payables: [], openingCash: 0, hasReal: false };
+  if (!supabase || !companyId) return { receivables: [], payables: [], openingCash: 0, invoiceLines: [], hasReal: false };
   const [r1, r2, r3] = await Promise.all([
     supabase.from("receivables").select("*").eq("company_id", companyId).order("due_date"),
     supabase.from("payables").select("*").eq("company_id", companyId).order("due_date"),
@@ -28,10 +29,22 @@ export async function fetchCashflowData(companyId) {
   if (r1.error) throw r1.error;
   if (r2.error) throw r2.error;
   if (r3.error) throw r3.error;
+  // dòng hóa đơn: lỗi ở đây không được làm sập phần còn lại
+  let invoiceLines = [];
+  try {
+    const { data, error } = await supabase
+      .from("invoice_lines")
+      .select("net, vat, total, ck, pay, invoice_uploads!inner(company_id)")
+      .eq("invoice_uploads.company_id", companyId);
+    if (!error && data) invoiceLines = data.map((l) => ({ net: Number(l.net) || 0, vat: Number(l.vat) || 0, total: Number(l.total) || 0, ck: Number(l.ck) || 0, pay: l.pay || "" }));
+  } catch { /* bỏ qua */ }
   const receivables = (r1.data || []).map(mapRecv);
   const payables = (r2.data || []).map(mapPay);
   const openingCash = Number(r3.data?.opening_cash) || 0;
-  return { receivables, payables, openingCash, hasReal: receivables.length > 0 || payables.length > 0 || !!r3.data };
+  return {
+    receivables, payables, openingCash, invoiceLines,
+    hasReal: receivables.length > 0 || payables.length > 0 || invoiceLines.length > 0 || !!r3.data,
+  };
 }
 
 export async function addReceivable(companyId, { customer, amount, dueDate }) {
@@ -40,9 +53,9 @@ export async function addReceivable(companyId, { customer, amount, dueDate }) {
   if (error) throw error;
 }
 
-export async function addPayable(companyId, { label, amount, dueDate }) {
+export async function addPayable(companyId, { label, amount, dueDate, category }) {
   const { error } = await db().from("payables")
-    .insert({ company_id: companyId, label, amount, due_date: dueDate });
+    .insert({ company_id: companyId, label, amount, due_date: dueDate, category: category || "other" });
   if (error) throw error;
 }
 

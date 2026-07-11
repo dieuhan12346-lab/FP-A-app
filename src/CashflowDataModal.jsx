@@ -14,7 +14,8 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
   const [opening, setOpening] = useState(data?.openingCash ?? 0);
   const [savingOpen, setSavingOpen] = useState(false);
   const [rForm, setRForm] = useState({ customer: "", amount: "", dueDate: "" });
-  const [pForm, setPForm] = useState({ label: "", amount: "", dueDate: "" });
+  const [pForm, setPForm] = useState({ label: "", amount: "", dueDate: "", category: "supplier" });
+  const CATS = ["supplier", "payroll", "tax", "other"];
 
   const receivables = data?.receivables || [];
   const payables = data?.payables || [];
@@ -45,8 +46,8 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
   const addP = () => {
     if (!pForm.label.trim() || !pForm.amount || !pForm.dueDate) { setErr(t("cf.data.err.fill")); return; }
     run(async () => {
-      await addPayable(companyId, { label: pForm.label.trim(), amount: Number(pForm.amount) || 0, dueDate: pForm.dueDate });
-      setPForm({ label: "", amount: "", dueDate: "" });
+      await addPayable(companyId, { label: pForm.label.trim(), amount: Number(pForm.amount) || 0, dueDate: pForm.dueDate, category: pForm.category });
+      setPForm({ label: "", amount: "", dueDate: "", category: pForm.category });
     });
   };
 
@@ -58,6 +59,7 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             <span style={{ textDecoration: paid ? "line-through" : "none" }}>{isRecv ? item.customer : item.label}</span>
             {isRecv && item.source === "invoice" && <span title={t("cf.data.fromInvoice")} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 5, color: C.cyan, background: C.cyan + "1c" }}><FileSpreadsheet size={9} />HĐ{item.invoiceNo ? " " + item.invoiceNo : ""}</span>}
+            {!isRecv && <span style={{ flex: "0 0 auto", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 5, color: C.gold, background: C.gold + "1c" }}>{t("cf.cat." + (item.category || "other"))}</span>}
           </div>
           <div className="tnum" style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>{(Number(item.amount) || 0).toLocaleString("vi-VN")} ₫ · {t("cf.data.due")} {item.dueDate}</div>
         </div>
@@ -120,10 +122,13 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
           {payables.length === 0 && <div style={{ fontSize: 12, color: C.sub, padding: "6px 2px" }}>{t("cf.data.pay.empty")}</div>}
           {payables.map((p) => <Row key={p.id} item={p} isRecv={false} />)}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr) 150px 84px", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 130px 128px 78px", gap: 8 }}>
           <input style={inp} placeholder={t("cf.data.label")} value={pForm.label} onChange={(e) => setPForm({ ...pForm, label: e.target.value })} />
           <input className="tnum" style={inp} type="number" min="0" placeholder={t("cf.data.amount")} value={pForm.amount} onChange={(e) => setPForm({ ...pForm, amount: e.target.value })} />
           <input className="tnum" style={inp} type="date" value={pForm.dueDate} onChange={(e) => setPForm({ ...pForm, dueDate: e.target.value })} />
+          <select style={inp} value={pForm.category} onChange={(e) => setPForm({ ...pForm, category: e.target.value })}>
+            {CATS.map((c) => <option key={c} value={c}>{t("cf.cat." + c)}</option>)}
+          </select>
           <button onClick={addP} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 9, border: `1px dashed ${C.red}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, color: C.red, background: "transparent", fontFamily: "inherit" }}><Plus size={13} />{t("cf.data.add")}</button>
         </div>
 

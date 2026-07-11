@@ -98,6 +98,47 @@ const CLASSIFICATION = [
   { code: "641", key: "acc.641", count: 88,  total: 295,  kind: "out" },
   { code: "333", key: "acc.333", count: 44,  total: 175,  kind: "out" },
 ];
+/* Phân loại tài khoản tính từ SỐ THẬT của công ty (thay cho CLASSIFICATION demo):
+   - Hóa đơn đã upload → 511/4000 doanh thu, 111·112 thu ngay, 3331/2300 VAT, 521 chiết khấu
+   - Khoản phải thu đang mở → 131/1200
+   - Khoản phải chi đang mở theo loại → 331·334·333·642 (IFRS: 2100·2400·2300·6100)
+   Đơn vị vào VND, ra TRIỆU (khớp fmtVnd của module). Chỉ trả về thẻ có dữ liệu. */
+export function buildClassificationReal(data, standard) {
+  const M = 1e6;
+  const vas = standard !== "IFRS";
+  const lines = data.invoiceLines || [];
+  const low = (p) => String(p || "").trim().toLowerCase();
+  const isCash = (p) => /^(tm|tiền mặt|tien mat|cash)$/.test(low(p));
+  const isBank = (p) => /^(ck|chuyển khoản|chuyen khoan|bank|transfer)$/.test(low(p));
+  const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+  const openRecv = (data.receivables || []).filter((r) => r.status !== "paid");
+  const pays = (data.payables || []).filter((p) => p.status !== "paid");
+  const byCat = (c) => pays.filter((p) => (p.category || "other") === c);
+  const cashL = lines.filter((l) => isCash(l.pay));
+  const bankL = lines.filter((l) => isBank(l.pay));
+  const vatL = lines.filter((l) => (Number(l.vat) || 0) > 0);
+  const ckL = lines.filter((l) => (Number(l.ck) || 0) > 0);
+  const rows = [
+    { code: vas ? "511" : "4000", key: vas ? "acc.511" : "ifrs.revenue", count: lines.length, total: sum(lines, (l) => l.net) / M, kind: "in" },
+    { code: vas ? "131" : "1200", key: vas ? "acc.131" : "ifrs.ar", count: openRecv.length, total: sum(openRecv, (r) => r.amount) / M, kind: "in" },
+    { code: vas ? "111" : "1000", key: vas ? "inv.entry.cash" : "ifrs.cash", count: cashL.length, total: sum(cashL, (l) => l.total) / M, kind: "neutral" },
+    { code: vas ? "112" : "1100", key: vas ? "acc.112" : "inv.entry.bank", count: bankL.length, total: sum(bankL, (l) => l.total) / M, kind: "neutral" },
+    { code: vas ? "3331" : "2300", key: vas ? "acc.3331" : "ifrs.taxpayable", count: vatL.length, total: sum(vatL, (l) => l.vat) / M, kind: "out" },
+    ...(vas ? [{ code: "521", key: "inv.entry.discount", count: ckL.length, total: sum(ckL, (l) => l.ck) / M, kind: "out" }] : []),
+    { code: vas ? "331" : "2100", key: vas ? "acc.331" : "ifrs.ap", count: byCat("supplier").length, total: sum(byCat("supplier"), (p) => p.amount) / M, kind: "out" },
+    { code: vas ? "334" : "2400", key: vas ? "acc.334" : "ifrs.payroll", count: byCat("payroll").length, total: sum(byCat("payroll"), (p) => p.amount) / M, kind: "out" },
+    { code: vas ? "333" : "2300", key: vas ? "acc.333" : "ifrs.taxpayable", count: byCat("tax").length, total: sum(byCat("tax"), (p) => p.amount) / M, kind: "out" },
+    { code: vas ? "642" : "6100", key: vas ? "acc.642" : "ifrs.ga", count: byCat("other").length, total: sum(byCat("other"), (p) => p.amount) / M, kind: "out" },
+  ].filter((r) => r.count > 0);
+  // IFRS: 2300 xuất hiện 2 lần (VAT hóa đơn + khoản chi thuế) → gộp làm một
+  const merged = [];
+  for (const r of rows) {
+    const hit = merged.find((x) => x.code === r.code && x.key === r.key);
+    if (hit) { hit.count += r.count; hit.total += r.total; } else merged.push({ ...r });
+  }
+  return merged;
+}
+
 /* Cùng số liệu, mã tài khoản/nhãn theo IFRS — dùng cho công ty accountingStandard === "IFRS" */
 const CLASSIFICATION_IFRS = [
   { code: "4000", key: "ifrs.revenue",    count: 312, total: 2180, kind: "in" },
@@ -233,7 +274,10 @@ function CashflowDashboard() {
   const standard = company?.accountingStandard || "VAS";
   const fmtVnd = (m) => fmtMoneyM(m, currency);
   const fmtTr = (m) => fmtCompactM(m, currency);
-  const classification = standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
+  const classification = useMemo(() => {
+    if (DEMO_MODE || !cfData || !cfData.hasReal) return standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
+    return buildClassificationReal(cfData, standard);
+  }, [cfData, standard]);
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
   const [scKey, setScKey] = useState("base");
   const [custom, setCustom] = useState({ rev: -0.20, cost: 0.05, delay: 2, haircut: 0.20 });
@@ -471,7 +515,10 @@ function CashflowDashboard() {
 
         <section className="card" style={{ ...panel, marginTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Tag size={17} color={C.cyan} /><h3 style={h3}>{t("cf.classTitle")}</h3></div>
-          <div style={{ fontSize: 12.5, color: C.sub, margin: "4px 0 14px" }}>{t("cf.classDesc")}</div>
+          <div style={{ fontSize: 12.5, color: C.sub, margin: "4px 0 14px" }}>{t(ds.real ? "cf.classDesc.real" : "cf.classDesc")}</div>
+          {ds.real && classification.length === 0 && (
+            <div style={{ fontSize: 12.5, color: C.sub, padding: "6px 2px" }}>{t("cf.class.empty")}</div>
+          )}
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill,minmax(232px,1fr))" }}>
             {classification.map((c) => { const col = c.kind === "in" ? C.green : c.kind === "out" ? C.red : C.cyan; return (<div key={c.code} style={{ padding: "12px 13px", borderRadius: 12, background: C.panel2, border: `1px solid ${C.line}` }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}><span className="tnum" style={{ fontWeight: 800, fontSize: 14, color: col }}>{c.code}</span><span style={{ width: 6, height: 6, borderRadius: 9, background: col }} /><span style={{ fontSize: 11.6, fontWeight: 600 }}>{t(c.key)}</span></div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}><span className="tnum" style={{ fontSize: 11.5, color: C.sub }}>{c.count} {t("cf.entries")}</span>{c.total > 0 && <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{fmtVnd(c.total)}</span>}</div></div>); })}
           </div>
