@@ -34,13 +34,15 @@ export async function setLanguage(lg) {
   }
 }
 
-/** Áp dụng lựa chọn ngôn ngữ đã lưu của user (gọi sau khi biết session). */
-export function applyUserLanguage(user) {
+/** Áp dụng lựa chọn ngôn ngữ đã lưu của user (gọi sau khi biết session).
+ *  company: hồ sơ đang dùng — hồ sơ ngoài VN ép tiếng Anh nên KHÔNG được ghi đè,
+ *  chỉ đồng bộ lựa chọn vào thiết bị để dùng khi quay về hồ sơ VN. */
+export function applyUserLanguage(user, company) {
   const saved = user?.user_metadata?.lang;
-  if ((saved === "vi" || saved === "en") && saved !== i18n.language) {
-    i18n.changeLanguage(saved);
-    try { localStorage.setItem(STORAGE_KEY, saved); } catch {}
-  }
+  if (saved !== "vi" && saved !== "en") return;
+  try { localStorage.setItem(STORAGE_KEY, saved); } catch {}
+  if (company && company.country && company.country !== "VN") return; // UI đang bị ép EN
+  if (saved !== i18n.language) i18n.changeLanguage(saved);
 }
 
 /** Ngôn ngữ UI theo quốc gia hồ sơ công ty:

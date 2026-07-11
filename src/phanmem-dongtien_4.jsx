@@ -310,10 +310,6 @@ function CashflowDashboard() {
             <div><div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 19, letterSpacing: "-0.02em" }}>{t("cf.title")}</div><div style={{ fontSize: 12.5, color: C.sub, marginTop: 1 }}>{t("cf.subtitle")}</div></div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            {(() => { const mode = !ds.real ? { k: "cf.mode.demo", tip: "cf.mode.demo.tip", c: C.gold, bg: C.goldSoft } : ds.empty ? { k: "cf.mode.empty", tip: "cf.mode.empty.tip", c: C.orange, bg: C.orangeSoft } : { k: "cf.mode.real", tip: "cf.mode.real.tip", c: C.green, bg: C.greenSoft }; return (
-              <span title={t(mode.tip)} style={{ fontSize: 10.5, fontWeight: 800, padding: "4px 10px", borderRadius: 7, letterSpacing: ".02em", color: mode.c, background: mode.bg, border: `1px solid ${mode.c}44` }}>{t(mode.k)}</span>
-            ); })()}
-            {!DEMO_MODE && <button className="btn" onClick={() => setShowData(true)} style={expBtn(C.violet, C.violetSoft)}><Database size={15} />{t("cf.data.button")}</button>}
             <button className="btn" onClick={exportExcel} style={expBtn(C.green, C.greenSoft)}><FileDown size={15} />{t("cf.exportExcel")}</button>
             <button className="btn" onClick={() => setShowReport(true)} style={expBtn(C.cyan, C.cyanSoft)}><FileText size={15} />{t("cf.reportPDF")}</button>
           </div>
@@ -321,15 +317,15 @@ function CashflowDashboard() {
 
         {showData && <CashflowDataModal companyId={company?.id} data={cfData} onChanged={reloadCf} onClose={() => setShowData(false)} />}
 
-        {/* bản chính, công ty chưa có dữ liệu → nhắc nhập, không hiện số giả */}
-        {ds.empty && (
-          <div className="card" style={{ ...panel, marginBottom: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", border: `1.5px dashed ${C.orange}55` }}>
-            <div style={{ width: 40, height: 40, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: C.orangeSoft }}><Database size={19} color={C.orange} /></div>
+        {/* bản chính: lối vào nhập/cập nhật dữ liệu — nút "Nhập dữ liệu" duy nhất của module */}
+        {!DEMO_MODE && (
+          <div className="card" style={{ ...panel, marginBottom: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", border: ds.empty ? `1.5px dashed ${C.orange}55` : `1px solid ${C.line}` }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: ds.empty ? C.orangeSoft : C.goldSoft }}><Database size={19} color={ds.empty ? C.orange : C.gold} /></div>
             <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontWeight: 800, fontSize: 14 }}>{t("cf.empty.title")}</div>
-              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, lineHeight: 1.55 }}>{t("cf.empty.desc")}</div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{t(ds.empty ? "cf.empty.title" : "cf.data.bar.title")}</div>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, lineHeight: 1.55 }}>{t(ds.empty ? "cf.empty.desc" : "cf.data.bar.desc")}</div>
             </div>
-            <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#1a1206", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Database size={15} />{t("cf.empty.cta")}</button>
+            <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#1a1206", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Database size={15} />{t("cf.data.button")}</button>
           </div>
         )}
 
@@ -2881,7 +2877,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getUser().then(({ data }) => { setMe(data.user); applyUserLanguage(data.user); }).catch(() => {});
+    supabase.auth.getUser().then(({ data }) => { setMe(data.user); applyUserLanguage(data.user, company); }).catch(() => {});
   }, []);
   const displayName = (me && (me.user_metadata?.display_name || (me.email || "").split("@")[0])) || t("user.fallback");
   const initials = displayName.trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(-2).join("").toUpperCase() || "ND";
