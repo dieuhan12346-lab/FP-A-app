@@ -274,10 +274,6 @@ function CashflowDashboard() {
   const standard = company?.accountingStandard || "VAS";
   const fmtVnd = (m) => fmtMoneyM(m, currency);
   const fmtTr = (m) => fmtCompactM(m, currency);
-  const classification = useMemo(() => {
-    if (DEMO_MODE || !cfData || !cfData.hasReal) return standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
-    return buildClassificationReal(cfData, standard);
-  }, [cfData, standard]);
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
   const [scKey, setScKey] = useState("base");
   const [custom, setCustom] = useState({ rev: -0.20, cost: 0.05, delay: 2, haircut: 0.20 });
@@ -297,6 +293,11 @@ function CashflowDashboard() {
 
   // dataset cấp cho mô phỏng: bản demo dùng số minh họa; bản chính CHỈ dùng số thật (chưa có → trống)
   const ds = useMemo(() => (DEMO_MODE ? DEMO_DS : cfData && cfData.hasReal ? buildRealDS(cfData) : EMPTY_DS), [cfData]);
+  // phân loại TT200/IFRS — khai báo SAU cfData (tránh lỗi TDZ ở bản build production)
+  const classification = useMemo(() => {
+    if (DEMO_MODE || !cfData || !cfData.hasReal) return standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
+    return buildClassificationReal(cfData, standard);
+  }, [cfData, standard]);
   useEffect(() => {
     setPlan(null);
     setSelected(ds.real ? new Set(ds.recv.map((r) => r.id)) : new Set(["r1", "r2"]));
@@ -2441,9 +2442,9 @@ export function classifyIFRS_INV(ln) {
   return e;
 }
 /* anomaly checks per line — standard: "VAS" | "IFRS" (mã số thuế VN có định dạng riêng, không áp cho công ty nước ngoài) */
-export function checkLine_INV(ln, standard = "VAS") {
+export function checkLine_INV(ln, standard = "VAS", currency = "VND") {
   const out = [];
-  const fmtN = (n) => Math.round(n).toLocaleString("vi-VN");
+  const fmtN = (n) => fmtMoney(n, currency);
   // 1. cân đối tổng thanh toán
   const calcTotal = Math.round(ln.net + ln.vat);
   out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, labelKey: "inv.check.totalMatch", v: `${fmtN(calcTotal)} ≈ ${fmtN(ln.total)}` });
@@ -2650,7 +2651,7 @@ function InvoiceProcess_INV() {
   const totals = lines ? lines.reduce((a, l) => ({ net: a.net + l.net, vat: a.vat + l.vat, total: a.total + l.total, ck: a.ck + l.ck }), { net: 0, vat: 0, total: 0, ck: 0 }) : null;
   const cf = (lines && done("chk")) ? buildCashflow_INV(lines, 2020, 8) : null;
   const cur = lines ? lines[Math.min(sel, lines.length - 1)] : null;
-  const warnCount = lines ? lines.reduce((a, l) => a + checkLine_INV(l, standard).filter((c) => !c.ok).length, 0) : 0;
+  const warnCount = lines ? lines.reduce((a, l) => a + checkLine_INV(l, standard, currency).filter((c) => !c.ok).length, 0) : 0;
 
   return (
     <div style={{ fontFamily: UI_INV, color: C_INV.txt }}>
@@ -2768,7 +2769,7 @@ function InvoiceProcess_INV() {
                   <div style={{ display: "grid", gridTemplateColumns: "30px 70px minmax(0,1.6fr) 84px 90px 70px", gap: 8, padding: "0 10px 7px", fontSize: 10.5, color: C_INV.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em" }}>
                     <span>#</span><span>{t("inv.tbl.no")}</span><span>{t("inv.tbl.customer")}</span><span style={{ textAlign: "right" }}>{t("inv.tbl.total")}</span><span style={{ textAlign: "right" }}>{t("inv.tbl.tax")}</span><span style={{ textAlign: "center" }}>{t("inv.tbl.warn")}</span>
                   </div>
-                  {lines.map((ln, i) => { const warns = checkLine_INV(ln, standard).filter((c) => !c.ok).length; const on = i === sel; return (
+                  {lines.map((ln, i) => { const warns = checkLine_INV(ln, standard, currency).filter((c) => !c.ok).length; const on = i === sel; return (
                     <button key={i} onClick={() => setSel(i)} className="rowh" style={{ width: "100%", textAlign: "left", cursor: "pointer", display: "grid", gridTemplateColumns: "30px 70px minmax(0,1.6fr) 84px 90px 70px", gap: 8, alignItems: "center", padding: "9px 10px", borderRadius: 10, marginBottom: 5, color: C_INV.txt, background: on ? C_INV.cyanSoft : C_INV.panel2, border: `1px solid ${on ? C_INV.cyan + "55" : C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{ln.stt}</span>
                       <span className="tnum" style={{ fontSize: 11.5 }}>{ln.no || "—"}</span>
@@ -2805,7 +2806,7 @@ function InvoiceProcess_INV() {
 
                 {/* checks */}
                 <div style={{ marginTop: 12, display: "grid", gap: 6, opacity: done("chk") ? 1 : .3, transition: "opacity .4s" }}>
-                  {checkLine_INV(cur, standard).map((c, i) => (
+                  {checkLine_INV(cur, standard, currency).map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 9, alignItems: "center", padding: "8px 11px", borderRadius: 9, background: c.ok ? C_INV.greenSoft : C_INV.orangeSoft, border: `1px solid ${(c.ok ? C_INV.green : C_INV.orange)}33` }}>
                       {c.ok ? <CheckCircle2 size={14} color={C_INV.green} style={{ flex: "0 0 auto" }} /> : <AlertTriangle size={14} color={C_INV.orange} style={{ flex: "0 0 auto" }} />}
                       <span style={{ fontSize: 11.8, fontWeight: 600, flex: 1 }}>{t(c.labelKey)}</span>

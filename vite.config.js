@@ -19,6 +19,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true, // nghe cả IPv4 lẫn IPv6 — tránh lỗi trình duyệt gọi localhost qua 127.0.0.1 không vào được
     fs: {
       strict: false,
       allow: ["."],
