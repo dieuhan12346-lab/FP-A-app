@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { COUNTRIES, OTHER_REGION, regionForCountry, CURRENCIES, ACCOUNTING_STANDARDS, TIMEZONES } from "./lib/regionDefaults";
+import { langForCountry } from "./i18n";
 
 const C = { bg: "#0B1526", panel: "#111E33", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", red: "#F26D6D" };
 
@@ -17,7 +18,8 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
   const { t } = useTranslation();
   const [name, setName] = useState(initial?.name || "");
   const [country, setCountry] = useState(initial?.country || "VN");
-  const [language, setLanguage] = useState(initial?.language || regionForCountry(initial?.country || "VN").language);
+  // ngôn ngữ UI không cho chọn: VN → tiếng Việt, ngoài VN → tiếng Anh
+  const language = langForCountry(country);
   const [currency, setCurrency] = useState(initial?.currency || regionForCountry(initial?.country || "VN").currency);
   const [accountingStandard, setAccountingStandard] = useState(initial?.accountingStandard || regionForCountry(initial?.country || "VN").accountingStandard);
   const [taxRegime, setTaxRegime] = useState(initial?.taxRegime || t(regionForCountry(initial?.country || "VN").taxRegimeKey));
@@ -28,7 +30,6 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
   const onCountryChange = (code) => {
     setCountry(code);
     const r = COUNTRIES.find((c) => c.code === code) || OTHER_REGION;
-    setLanguage(r.language);
     setCurrency(r.currency);
     setAccountingStandard(r.accountingStandard);
     setTaxRegime(t(r.taxRegimeKey));
@@ -68,33 +69,24 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={fieldWrap}>
-          <label style={labelStyle}>{t("onb.language")}</label>
-          <select style={lockedStyle} disabled={lockAllButName} value={language} onChange={(e) => setLanguage(e.target.value)}>
-            <option value="vi">Tiếng Việt</option>
-            <option value="en">English</option>
-          </select>
-        </div>
-        <div style={fieldWrap}>
           <label style={labelStyle}>{t("onb.currency")}</label>
           <select style={lockedStyle} disabled={lockAllButName} value={currency} onChange={(e) => setCurrency(e.target.value)}>
             {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={fieldWrap}>
           <label style={labelStyle}>{t("onb.standard")}</label>
           <select style={lockedStyle} disabled={lockAllButName} value={accountingStandard} onChange={(e) => setAccountingStandard(e.target.value)}>
             {ACCOUNTING_STANDARDS.map((s) => <option key={s} value={s}>{t("onb.standard." + s)}</option>)}
           </select>
         </div>
-        <div style={fieldWrap}>
-          <label style={labelStyle}>{t("onb.timezone")}</label>
-          <select style={lockedStyle} disabled={lockAllButName} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-            {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-          </select>
-        </div>
+      </div>
+
+      <div style={fieldWrap}>
+        <label style={labelStyle}>{t("onb.timezone")}</label>
+        <select style={lockedStyle} disabled={lockAllButName} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+          {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+        </select>
       </div>
 
       <div style={fieldWrap}>

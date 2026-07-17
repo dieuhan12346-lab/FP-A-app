@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import * as XLSX from "xlsx";
 import { useTranslation, I18nextProvider } from "react-i18next";
-import i18n, { setLanguage, applyUserLanguage } from "./i18n";
+import i18n from "./i18n";
 import { saveInvoiceUpload, loadLatestInvoiceUpload, listInvoiceUploads, loadInvoiceUpload, deleteInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
 import { loadAccounts, accountName } from "./lib/accounts";
@@ -2312,35 +2312,44 @@ const DISP_INV = "'Sora', 'Manrope', system-ui, sans-serif";
 const fmtVnd_INV = (n) => (Number(n) || 0).toLocaleString("vi-VN") + " ₫";
 const fmtTr_INV = (n) => ((Number(n) || 0) / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 2 }) + " tr";
 
-/* column header aliases → canonical field (matches MISA/FAST export wording) */
+/* column header aliases → canonical field.
+   VI wording follows MISA/FAST exports; EN wording follows QuickBooks/Xero/Zoho. */
 const COLMAP_INV = {
-  stt: ["stt", "số tt", "tt"],
-  date: ["ngày hđ", "ngày hóa đơn", "ngày", "ngày lập"],
-  serial: ["ký hiệu", "ký hiệu hđ", "mẫu số ký hiệu"],
-  no: ["số hđ", "số hóa đơn", "số"],
-  buyerTax: ["mst người mua", "mã số thuế người mua", "mst", "mã số thuế"],
-  buyer: ["tên người mua", "tên đơn vị", "khách hàng", "người mua"],
-  item: ["tên hàng hóa, dịch vụ", "tên hàng hóa", "hàng hóa, dịch vụ", "diễn giải", "tên hàng"],
-  unit: ["đvt", "đơn vị tính"],
-  qty: ["số lượng", "sl"],
-  price: ["đơn giá"],
-  amount: ["tiền hàng", "thành tiền", "tiền hàng chưa thuế"],
-  ckRate: ["tỷ lệ ck (%)", "tỷ lệ ck", "tỷ lệ chiết khấu"],
-  ck: ["tiền ck", "tiền chiết khấu", "chiết khấu"],
-  net: ["tiền hàng sau ck", "tiền hàng đã trừ ck", "cộng tiền hàng"],
-  vatRate: ["thuế suất (%)", "thuế suất", "thuế suất gtgt"],
-  vat: ["tiền thuế gtgt", "tiền thuế", "thuế gtgt"],
-  total: ["tổng thanh toán", "tổng cộng tiền thanh toán", "tổng tiền thanh toán", "tổng tiền"],
-  pay: ["hình thức tt", "hình thức thanh toán", "hình thức tt"],
+  stt: ["stt", "số tt", "tt", "no.", "line", "line no", "item no", "#"],
+  date: ["ngày hđ", "ngày hóa đơn", "ngày", "ngày lập", "invoice date", "date", "issue date"],
+  serial: ["ký hiệu", "ký hiệu hđ", "mẫu số ký hiệu", "series", "prefix"],
+  no: ["số hđ", "số hóa đơn", "số", "invoice no", "invoice number", "invoice #", "invoice"],
+  buyerTax: ["mst người mua", "mã số thuế người mua", "mst", "mã số thuế",
+             "buyer tax id", "tax id", "customer tax id", "vat number", "vat no", "tax registration no", "uen", "abn", "ein"],
+  buyer: ["tên người mua", "tên đơn vị", "khách hàng", "người mua",
+          "customer", "customer name", "buyer", "buyer name", "client", "bill to"],
+  item: ["tên hàng hóa, dịch vụ", "tên hàng hóa", "hàng hóa, dịch vụ", "diễn giải", "tên hàng",
+         "description", "item", "item name", "product", "product/service", "goods or services"],
+  unit: ["đvt", "đơn vị tính", "unit", "uom", "unit of measure"],
+  qty: ["số lượng", "sl", "quantity", "qty"],
+  price: ["đơn giá", "unit price", "rate", "price"],
+  amount: ["tiền hàng", "thành tiền", "tiền hàng chưa thuế",
+           "amount", "line amount", "subtotal", "net amount", "amount excl. tax", "amount excluding tax"],
+  ckRate: ["tỷ lệ ck (%)", "tỷ lệ ck", "tỷ lệ chiết khấu", "discount rate", "discount (%)", "discount %"],
+  ck: ["tiền ck", "tiền chiết khấu", "chiết khấu", "discount", "discount amount"],
+  net: ["tiền hàng sau ck", "tiền hàng đã trừ ck", "cộng tiền hàng",
+        "net", "net total", "taxable amount", "amount after discount"],
+  vatRate: ["thuế suất (%)", "thuế suất", "thuế suất gtgt",
+            "tax rate", "tax rate (%)", "vat rate", "vat (%)", "gst rate", "gst (%)"],
+  vat: ["tiền thuế gtgt", "tiền thuế", "thuế gtgt", "tax", "tax amount", "vat", "vat amount", "gst", "gst amount"],
+  total: ["tổng thanh toán", "tổng cộng tiền thanh toán", "tổng tiền thanh toán", "tổng tiền",
+          "total", "invoice total", "amount due", "grand total", "total incl. tax", "total including tax"],
+  pay: ["hình thức tt", "hình thức thanh toán", "payment method", "payment terms", "method", "paid by"],
 };
 const norm_INV = (s) => String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
+/* -1 = không nhận ra dòng tiêu đề nào (KHÔNG đoán bừa dòng 0 rồi đọc ra 0 hóa đơn) */
 function findHeaderRow_INV(rows) {
   for (let i = 0; i < Math.min(rows.length, 25); i++) {
     const cells = (rows[i] || []).map(norm_INV);
-    const hit = cells.filter((c) => c === "stt" || COLMAP_INV.no.includes(c) || COLMAP_INV.total.includes(c)).length;
+    const hit = cells.filter((c) => COLMAP_INV.stt.includes(c) || COLMAP_INV.no.includes(c) || COLMAP_INV.total.includes(c)).length;
     if (hit >= 2) return i;
   }
-  return 0;
+  return -1;
 }
 function buildColIndex_INV(headerCells) {
   const idx = {}; const hc = headerCells.map(norm_INV);
@@ -2366,6 +2375,7 @@ const toNum_INV = (v) => {
 function parseInvoices_INV(aoa) {
   if (!aoa || !aoa.length) return { lines: [], colIndex: {}, headerRow: -1 };
   const hr = findHeaderRow_INV(aoa);
+  if (hr < 0) return { lines: [], colIndex: {}, headerRow: -1 }; // tiêu đề không nhận ra → để UI báo lỗi
   const colIndex = buildColIndex_INV(aoa[hr] || []);
   const get = (row, f) => (colIndex[f] != null ? row[colIndex[f]] : undefined);
   const lines = [];
@@ -2442,23 +2452,27 @@ export function classifyIFRS_INV(ln) {
   if (ln.vat > 0) e.push({ acc: "2300", side: "Có", nameKey: "inv.entry.vatOut.ifrs", nameVars: { rate: ln.vatRate || 0 }, amount: ln.vat, c: C_INV.violet });
   return e;
 }
-/* anomaly checks per line — standard: "VAS" | "IFRS" (mã số thuế VN có định dạng riêng, không áp cho công ty nước ngoài) */
-export function checkLine_INV(ln, standard = "VAS", currency = "VND") {
+/* Anomaly checks per line. Hai trục ĐỘC LẬP, đừng dùng cái này thay cái kia:
+   - standard ("VAS" | "IFRS") → chỉ quyết định số hiệu tài khoản & cấu trúc bút toán.
+   - country  ("VN" | "SG" | …) → quyết định luật thuế: định dạng MST và dải thuế suất.
+   Công ty FDI ở VN lập báo cáo IFRS vẫn nộp thuế VN: vẫn phải có MST 10 số, vẫn 0/5/8/10%. */
+export function checkLine_INV(ln, standard = "VAS", currency = "VND", country = "VN") {
   const out = [];
   const fmtN = (n) => fmtMoney(n, currency);
+  const vnTax = (country || "VN") === "VN";
   // 1. cân đối tổng thanh toán
   const calcTotal = Math.round(ln.net + ln.vat);
   out.push({ ok: Math.abs(calcTotal - Math.round(ln.total)) <= 1, labelKey: "inv.check.totalMatch", v: `${fmtN(calcTotal)} ≈ ${fmtN(ln.total)}` });
-  // 2. mã số thuế người mua
-  if (standard === "IFRS") {
-    out.push({ ok: !!ln.buyerTax, labelKey: "inv.check.taxIdProvided", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
-  } else {
+  // 2. mã số thuế người mua — chỉ VN mới có định dạng cố định 10 số (+3 số chi nhánh)
+  if (vnTax) {
     out.push({ ok: /^\d{10}(-\d{3})?$/.test(ln.buyerTax), labelKey: "inv.check.taxIdValid", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
+  } else {
+    out.push({ ok: !!ln.buyerTax, labelKey: "inv.check.taxIdProvided", v: ln.buyerTax || "", vKey: ln.buyerTax ? null : "inv.check.empty" });
   }
-  // 3. thuế suất hợp lệ — 0% (xuất khẩu) là hợp lệ; VN: 0/5/8/10
+  // 3. thuế suất hợp lệ — 0% (xuất khẩu) là hợp lệ; VN: 0/5/8/10, ngoài VN: 0–30
   const rate = Number(ln.vatRate) || 0;
-  const rateOk = standard === "IFRS" ? rate >= 0 && rate <= 30 : [0, 5, 8, 10].includes(Math.round(rate));
-  out.push({ ok: rateOk, labelKey: standard === "IFRS" ? "inv.check.vatRatePlausible" : "inv.check.vatRateValid", v: rate + "%" });
+  const rateOk = vnTax ? [0, 5, 8, 10].includes(Math.round(rate)) : rate >= 0 && rate <= 30;
+  out.push({ ok: rateOk, labelKey: vnTax ? "inv.check.vatRateValid" : "inv.check.vatRatePlausible", v: rate + "%" });
   // 4. tiền thuế = tiền hàng sau CK × thuế suất (±2đ sai số làm tròn)
   const calcVat = Math.round(ln.net * rate / 100);
   out.push({ ok: Math.abs(calcVat - Math.round(ln.vat)) <= 2, labelKey: "inv.check.vatCalc", v: `${fmtN(calcVat)} ≈ ${fmtN(ln.vat)}` });
@@ -2520,7 +2534,8 @@ function InvoiceProcess_INV() {
   const { t, i18n: i18nInst } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
-  const standard = company?.accountingStandard || "VAS";
+  const standard = company?.accountingStandard || "VAS"; // → số hiệu tài khoản, cấu trúc bút toán
+  const country = company?.country || "VN";              // → luật thuế: định dạng MST, dải thuế suất
   const lang = (i18nInst.language || "vi").startsWith("vi") ? "vi" : "en";
   const fmtVnd_INV = (n) => fmtMoney(n, currency);
   const fmtTr_INV = (n) => fmtMoneyCompactM(n, currency);
@@ -2621,6 +2636,8 @@ function InvoiceProcess_INV() {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
         const { lines: ls, colIndex, headerRow } = parseInvoices_INV(aoa);
+        // hai thất bại khác nhau: không đọc được cột vs đọc được cột nhưng không có dòng nào
+        if (headerRow < 0) { setErr(t("inv.err.noHeader")); setLines(null); return; }
         if (!ls.length) { setErr(t("inv.err.noRows")); setLines(null); return; }
         setLines(ls); setSel(0);
         const m = { name: f.name, headerRow: headerRow + 1, cols: (aoa[headerRow] || []).length, mapped: Object.keys(colIndex).length };
@@ -2652,7 +2669,7 @@ function InvoiceProcess_INV() {
   const totals = lines ? lines.reduce((a, l) => ({ net: a.net + l.net, vat: a.vat + l.vat, total: a.total + l.total, ck: a.ck + l.ck }), { net: 0, vat: 0, total: 0, ck: 0 }) : null;
   const cf = (lines && done("chk")) ? buildCashflow_INV(lines, 2020, 8) : null;
   const cur = lines ? lines[Math.min(sel, lines.length - 1)] : null;
-  const warnCount = lines ? lines.reduce((a, l) => a + checkLine_INV(l, standard, currency).filter((c) => !c.ok).length, 0) : 0;
+  const warnCount = lines ? lines.reduce((a, l) => a + checkLine_INV(l, standard, currency, country).filter((c) => !c.ok).length, 0) : 0;
 
   return (
     <div style={{ fontFamily: UI_INV, color: C_INV.txt }}>
@@ -2770,7 +2787,7 @@ function InvoiceProcess_INV() {
                   <div style={{ display: "grid", gridTemplateColumns: "30px 70px minmax(0,1.6fr) 84px 90px 70px", gap: 8, padding: "0 10px 7px", fontSize: 10.5, color: C_INV.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em" }}>
                     <span>#</span><span>{t("inv.tbl.no")}</span><span>{t("inv.tbl.customer")}</span><span style={{ textAlign: "right" }}>{t("inv.tbl.total")}</span><span style={{ textAlign: "right" }}>{t("inv.tbl.tax")}</span><span style={{ textAlign: "center" }}>{t("inv.tbl.warn")}</span>
                   </div>
-                  {lines.map((ln, i) => { const warns = checkLine_INV(ln, standard, currency).filter((c) => !c.ok).length; const on = i === sel; return (
+                  {lines.map((ln, i) => { const warns = checkLine_INV(ln, standard, currency, country).filter((c) => !c.ok).length; const on = i === sel; return (
                     <button key={i} onClick={() => setSel(i)} className="rowh" style={{ width: "100%", textAlign: "left", cursor: "pointer", display: "grid", gridTemplateColumns: "30px 70px minmax(0,1.6fr) 84px 90px 70px", gap: 8, alignItems: "center", padding: "9px 10px", borderRadius: 10, marginBottom: 5, color: C_INV.txt, background: on ? C_INV.cyanSoft : C_INV.panel2, border: `1px solid ${on ? C_INV.cyan + "55" : C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{ln.stt}</span>
                       <span className="tnum" style={{ fontSize: 11.5 }}>{ln.no || "—"}</span>
@@ -2807,7 +2824,7 @@ function InvoiceProcess_INV() {
 
                 {/* checks */}
                 <div style={{ marginTop: 12, display: "grid", gap: 6, opacity: done("chk") ? 1 : .3, transition: "opacity .4s" }}>
-                  {checkLine_INV(cur, standard, currency).map((c, i) => (
+                  {checkLine_INV(cur, standard, currency, country).map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 9, alignItems: "center", padding: "8px 11px", borderRadius: 9, background: c.ok ? C_INV.greenSoft : C_INV.orangeSoft, border: `1px solid ${(c.ok ? C_INV.green : C_INV.orange)}33` }}>
                       {c.ok ? <CheckCircle2 size={14} color={C_INV.green} style={{ flex: "0 0 auto" }} /> : <AlertTriangle size={14} color={C_INV.orange} style={{ flex: "0 0 auto" }} />}
                       <span style={{ fontSize: 11.8, fontWeight: 600, flex: 1 }}>{t(c.labelKey)}</span>
@@ -2913,11 +2930,7 @@ export default function App() {
 }
 
 function AppShell() {
-  const { t, i18n: i18nInst } = useT();
-  const lang = i18nInst.language;
-  const setLang = setLanguage;
-  const { company } = useCompany();
-  const isVnCompany = (company?.country || "VN") === "VN"; // ngoài VN: UI ép tiếng Anh, ẩn nút VI/EN
+  const { t } = useT();
   const [page, setPage] = useState("cashflow");
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
@@ -2926,7 +2939,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getUser().then(({ data }) => { setMe(data.user); applyUserLanguage(data.user, company); }).catch(() => {});
+    supabase.auth.getUser().then(({ data }) => setMe(data.user)).catch(() => {});
   }, []);
   const displayName = (me && (me.user_metadata?.display_name || (me.email || "").split("@")[0])) || t("user.fallback");
   const initials = displayName.trim().split(/\s+/).map((w) => w[0]).filter(Boolean).slice(-2).join("").toUpperCase() || "ND";
@@ -3031,13 +3044,6 @@ function AppShell() {
             <div style={{ fontSize: 11.5, color: C.sub }}>{t("nav." + active.key + ".desc")}</div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            {isVnCompany && (
-              <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: `1px solid ${C.line}` }}>
-                {["vi", "en"].map((lg) => (
-                  <button key={lg} onClick={() => setLang(lg)} style={{ cursor: "pointer", border: "none", padding: "6px 11px", fontSize: 11.5, fontWeight: 800, fontFamily: UI, color: lang === lg ? "#06121f" : C.sub, background: lang === lg ? C.cyan : "transparent" }}>{lg.toUpperCase()}</button>
-                ))}
-              </div>
-            )}
             <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "6px 12px", borderRadius: 20 }}>
               <span style={{ width: 7, height: 7, borderRadius: 9, background: C.green }} />{t("app.status")}
             </span>
