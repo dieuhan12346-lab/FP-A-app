@@ -20,7 +20,7 @@ import {
   AlertTriangle, Wallet, Phone, FileSpreadsheet, CheckCircle2, Sparkles,
   ShieldCheck, ShieldAlert, TrendingDown, Tag, Activity, Zap, Wand2,
   FileDown, Printer, SlidersHorizontal, FileText, X, Check,
-  Building2, Database, CreditCard, Users, ChevronDown, Plus, Link2,
+  Building2, Database, Users, Plus,
   LayoutDashboard, Brain, Bot, Gauge, Bell, Tag as TagIcon, Menu, Boxes,
   TrendingUp, Clock, Play, Pause, RotateCcw, Send, ChevronRight, Cpu, Scale,
   Coins, Calendar, Scissors, Handshake,
@@ -55,13 +55,6 @@ const DISP = "'Sora', 'Manrope', system-ui, sans-serif";
 
 /* ---------- model (triệu đồng) ---------- */
 const COMPANY = "Công ty TNHH Thương mại & Dịch vụ Bình Minh";
-const DATA_SOURCES = [
-  { id: "misa",   name: "MISA",       kind: "Kế toán", icon: FileSpreadsheet, color: C.gold,   rows: "1.247 bút toán" },
-  { id: "sap",    name: "SAP ERP",    kind: "ERP",     icon: Building2,       color: C.cyan,   rows: "48,2K bản ghi" },
-  { id: "oracle", name: "Oracle",     kind: "ERP",     icon: Database,        color: C.violet, rows: "22,9K bản ghi" },
-  { id: "sf",     name: "Salesforce", kind: "CRM",     icon: Users,           color: C.green,  rows: "12,7K cơ hội" },
-  { id: "bank",   name: "Ngân hàng",  kind: "Open Banking", icon: CreditCard, color: C.orange, rows: "31,5K giao dịch" },
-];
 const START_CASH = 600;
 const INFLOW  = [170, 160, 180, 150, 175, 165, 155, 180, 160, 170, 165, 175, 180];
 const OUTFLOW = [200, 140, 235, 360, 200, 420, 220, 360, 200, 140, 140, 360, 200];
@@ -284,8 +277,6 @@ function CashflowDashboard() {
   const [target, setTarget] = useState(0.10);
   const [plan, setPlan] = useState(null);
   const [showReport, setShowReport] = useState(false);
-  const [srcOpen, setSrcOpen] = useState(false);
-  const [connected, setConnected] = useState(() => new Set(["misa"]));
   const [cfData, setCfData] = useState(null);     // dữ liệu thật từ Supabase (null = chưa có/đang tải)
   const [showData, setShowData] = useState(false); // modal nhập liệu
 
@@ -315,7 +306,6 @@ function CashflowDashboard() {
   }, []);
 
   const toggle = (id) => { setPlan(null); setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
-  const toggleConnect = (id) => setConnected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const sc = useMemo(() => scKey === "custom" ? { key: "custom", name: "Tùy chỉnh", ...custom, revSd: clamp(0.06 + Math.abs(custom.rev) * 0.35, 0.06, 0.22) } : PRESETS.find((s) => s.key === scKey), [scKey, custom]);
   const seed = useMemo(() => { let h = 7; const str = scKey + JSON.stringify(custom) + [...selected].sort().join(""); for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h >>> 0; }, [selected, scKey, custom]);
   const sim = useMemo(() => simulate(selected, sc, seed, 1400, ds), [selected, sc, seed, ds]);
@@ -378,38 +368,6 @@ function CashflowDashboard() {
             <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#1a1206", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Database size={15} />{t("cf.data.button")}</button>
           </div>
         )}
-
-        {/* CONNECT SOFTWARE (dropdown picker) */}
-        <div className="card" style={{ ...panel, padding: 0, marginBottom: 16, overflow: "hidden" }}>
-          <button className="btn" onClick={() => setSrcOpen((o) => !o)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "13px 16px", background: "transparent", color: C.txt, textAlign: "left" }}>
-            <Link2 size={16} color={C.cyan} />
-            <span style={{ fontWeight: 800, fontSize: 13.5 }}>{t("cf.connect")}</span>
-            <span style={{ fontSize: 12, color: C.sub }}>{t("cf.connect.desc")}</span>
-            <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: connected.size ? C.green : C.sub, background: connected.size ? C.greenSoft : "rgba(255,255,255,.04)", padding: "4px 10px", borderRadius: 20 }}>
-              {connected.size ? <><span style={{ width: 7, height: 7, borderRadius: 9, background: C.green }} />{t("cf.connected", { n: connected.size, m: DATA_SOURCES.length })}</> : t("cf.connectedNone")}
-            </span>
-            <ChevronDown size={17} color={C.sub} style={{ transition: "transform .25s", transform: srcOpen ? "rotate(180deg)" : "none" }} />
-          </button>
-          {srcOpen && (
-            <div style={{ padding: "13px 16px 14px", display: "flex", gap: 9, flexWrap: "wrap", borderTop: `1px solid ${C.line}` }}>
-              {DATA_SOURCES.map((s) => { const Ic = s.icon; const on = connected.has(s.id); return (
-                <div key={s.id} style={{ flex: "1 1 200px", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, background: C.panel2, border: `1px solid ${on ? s.color + "55" : C.line}`, transition: "all .2s" }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 8, flex: "0 0 auto", display: "grid", placeItems: "center", background: on ? s.color + "22" : "rgba(255,255,255,.05)" }}><Ic size={16} color={on ? s.color : C.sub} /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontWeight: 700, fontSize: 12.8, whiteSpace: "nowrap" }}>{s.name}</span>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: on ? s.color : C.sub, background: (on ? s.color : C.sub) + "1f", padding: "1px 6px", borderRadius: 5 }}>{s.kind}</span>
-                    </div>
-                    <div className="tnum" style={{ fontSize: 10.5, color: C.sub, marginTop: 2 }}>{on ? s.rows : t("cf.notConnected")}</div>
-                  </div>
-                  <button className="btn" onClick={() => toggleConnect(s.id)} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8, fontSize: 11.5, fontWeight: 700, color: on ? C.green : "#06202f", background: on ? C.greenSoft : s.color, border: on ? `1px solid ${C.green}55` : "none" }}>
-                    {on ? <><CheckCircle2 size={13} />{t("cf.connDone")}</> : <><Plus size={13} />{t("cf.connBtn")}</>}
-                  </button>
-                </div>
-              ); })}
-            </div>
-          )}
-        </div>
 
         <div className="card" style={{ ...panel, padding: "13px 16px", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}><Zap size={16} color={C.orange} /><span style={{ fontWeight: 800, fontSize: 13.5 }}>{t("cf.stressTitle")}</span><span style={{ fontSize: 12, color: C.sub }}>{t("cf.stressDesc")}</span></div>
@@ -704,14 +662,6 @@ const C_FPA = {
 const MONO_FPA = "'IBM Plex Mono', ui-monospace, monospace";
 const UI_FPA = "'Manrope', system-ui, sans-serif";
 const DISP_FPA = "'Sora', 'Manrope', system-ui, sans-serif";
-
-/* ---------- data sources ---------- */
-const SOURCES_FPA = [
-  { id: "sap", name: "SAP ERP", kind: "ERP", icon: Building2, rows: "48.2K", color: C_FPA.cyan, detail: "Sổ cái, công nợ, đơn hàng" },
-  { id: "sf", name: "Salesforce", kind: "CRM", icon: Users, rows: "12.7K", color: C_FPA.violet, detail: "Pipeline doanh thu, hợp đồng" },
-  { id: "bank", name: "Ngân hàng (Open Banking)", kind: "BANK", icon: CreditCard, rows: "31.5K", color: C_FPA.green, detail: "Giao dịch, số dư thời gian thực" },
-  { id: "oracle", name: "Oracle Financials", kind: "ERP", icon: Database, rows: "22.9K", color: C_FPA.gold, detail: "Kế toán, ngân sách" },
-];
 
 /* ---------- macro signals feeding the ML model ---------- */
 const MACRO_FPA = [
@@ -2547,6 +2497,10 @@ function InvoiceProcess_INV() {
   const dualStandard = statutory !== reporting;
   const [stdView, setStdView] = useState("statutory");
   const standard = dualStandard && stdView === "reporting" ? reporting : statutory; // → số hiệu tài khoản, cấu trúc bút toán
+  // số hiệu tài khoản trên 4 thẻ tổng — phải khớp hệ mà bút toán bên dưới đang dùng
+  const kpiAcc = chartFor(standard) === "VAS"
+    ? { net: "511", vat: "3331", ar: "131" }
+    : { net: "4000", vat: "2300", ar: "1200" };
   const lang = (i18nInst.language || "vi").startsWith("vi") ? "vi" : "en";
   const books = booksCurrencyFor(country); // file hóa đơn ghi bằng tiền tệ sở tại, không phải currency hiển thị
   const fmtVnd_INV = (n) => fmtMoney(n, currency, books);
@@ -2795,9 +2749,9 @@ function InvoiceProcess_INV() {
             {/* KPI summary */}
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", marginBottom: 16, opacity: done("ocr") ? 1 : .4, transition: "opacity .4s" }}>
               <KpiInv label={t("inv.kpi.count")} v={String(lines.length)} c={C_INV.cyan} icon={<Receipt size={15} />} />
-              <KpiInv label={t("inv.kpi.net")} v={fmtTr_INV(totals.net)} c={C_INV.gold} icon={<Coins size={15} />} />
-              <KpiInv label={t("inv.kpi.vat")} v={fmtTr_INV(totals.vat)} c={C_INV.violet} icon={<Percent size={15} />} />
-              <KpiInv label={t("inv.kpi.total")} v={fmtTr_INV(totals.total)} c={C_INV.green} icon={<Wallet size={15} />} />
+              <KpiInv label={t("inv.kpi.net", { acc: kpiAcc.net })} v={fmtTr_INV(totals.net)} c={C_INV.gold} icon={<Coins size={15} />} />
+              <KpiInv label={t("inv.kpi.vat", { acc: kpiAcc.vat })} v={fmtTr_INV(totals.vat)} c={C_INV.violet} icon={<Percent size={15} />} />
+              <KpiInv label={t("inv.kpi.total", { acc: kpiAcc.ar })} v={fmtTr_INV(totals.total)} c={C_INV.green} icon={<Wallet size={15} />} />
             </div>
 
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0,1.25fr) minmax(0,1fr)" }}>

@@ -50,6 +50,17 @@ grant update (name, statutory_standard, reporting_standard) on public.companies 
 -- Chỉ xoá nó khi mọi bản deploy đã dùng 2 cột mới:
 --     alter table public.companies drop column accounting_standard;
 
+-- 6. Hệ tài khoản tổng quát dùng chung cho IFRS lẫn US GAAP, nên tên tài khoản không được
+--    trích dẫn riêng một chuẩn: công ty Mỹ áp dụng ASC 606, không phải IFRS 15. Hai chuẩn
+--    này hội tụ và có CÙNG tên gọi "Revenue from Contracts with Customers", nên bỏ phần
+--    trong ngoặc là đúng cho cả hai.
+--    (Seed dùng "on conflict do nothing" nên không tự sửa được, phải update tường minh.)
+update public.accounts
+   set name_en = 'Revenue from contracts with customers'
+ where standard = 'IFRS' and code = '4000'
+   and name_en <> 'Revenue from contracts with customers';
+
 -- ============ Kiểm tra sau khi chạy ============
 -- select name, country, accounting_standard, statutory_standard, reporting_standard
 --   from public.companies;
+-- select standard, code, name_en from public.accounts where code = '4000';

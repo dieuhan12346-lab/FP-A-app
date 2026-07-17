@@ -262,7 +262,7 @@ insert into public.accounts (standard, code, name_vi, name_en, type) values
   ('IFRS','2400','Lương phải trả','Payroll liabilities','liability'),
   ('IFRS','3000','Vốn cổ phần','Share capital','equity'),
   ('IFRS','3100','Lợi nhuận giữ lại','Retained earnings','equity'),
-  ('IFRS','4000','Doanh thu từ hợp đồng với khách hàng','Revenue from contracts with customers (IFRS 15)','revenue'),
+  ('IFRS','4000','Doanh thu từ hợp đồng với khách hàng','Revenue from contracts with customers','revenue'),  -- tên chung của IFRS 15 và ASC 606
   ('IFRS','5000','Giá vốn hàng bán','Cost of sales','expense'),
   ('IFRS','6000','Chi phí bán hàng','Selling expenses','expense'),
   ('IFRS','6100','Chi phí quản lý chung','General & administrative expenses','expense')
