@@ -293,10 +293,11 @@ function CashflowDashboard() {
 
   // dataset cấp cho mô phỏng: bản demo dùng số minh họa; bản chính CHỈ dùng số thật (chưa có → trống)
   const ds = useMemo(() => (DEMO_MODE ? DEMO_DS : cfData && cfData.hasReal ? buildRealDS(cfData) : EMPTY_DS), [cfData]);
-  // phân loại TT200/IFRS — khai báo SAU cfData (tránh lỗi TDZ ở bản build production)
+  // phân loại TT200/IFRS — khai báo SAU cfData (tránh lỗi TDZ ở bản build production).
+  // Bản chính CHỈ dựng từ số thật; chưa có dữ liệu → rỗng (KHÔNG mượn số minh họa).
   const classification = useMemo(() => {
-    if (DEMO_MODE || !cfData || !cfData.hasReal) return standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
-    return buildClassificationReal(cfData, standard);
+    if (DEMO_MODE) return standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
+    return cfData && cfData.hasReal ? buildClassificationReal(cfData, standard) : [];
   }, [cfData, standard]);
   useEffect(() => {
     setPlan(null);
@@ -516,8 +517,8 @@ function CashflowDashboard() {
 
         <section className="card" style={{ ...panel, marginTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Tag size={17} color={C.cyan} /><h3 style={h3}>{t("cf.classTitle")}</h3></div>
-          <div style={{ fontSize: 12.5, color: C.sub, margin: "4px 0 14px" }}>{t(ds.real ? "cf.classDesc.real" : "cf.classDesc")}</div>
-          {ds.real && classification.length === 0 && (
+          <div style={{ fontSize: 12.5, color: C.sub, margin: "4px 0 14px" }}>{t(DEMO_MODE ? "cf.classDesc" : "cf.classDesc.real")}</div>
+          {!DEMO_MODE && classification.length === 0 && (
             <div style={{ fontSize: 12.5, color: C.sub, padding: "6px 2px" }}>{t("cf.class.empty")}</div>
           )}
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill,minmax(232px,1fr))" }}>
