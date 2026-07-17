@@ -28,6 +28,13 @@ export const ACCOUNTING_STANDARDS = ["VAS", "IFRS", "USGAAP"];
 export function chartFor(standard) {
   return standard === "VAS" ? "VAS" : "IFRS";
 }
+
+/** Đơn vị mà SỔ SÁCH ghi — khác đơn vị hiển thị (company.currency).
+ *  Hóa đơn/chứng từ của công ty ghi bằng tiền tệ nước sở tại: file MISA ghi VND,
+ *  file QuickBooks của công ty Mỹ ghi USD. Hiển thị mới là chuyện quy đổi. */
+export function booksCurrencyFor(country) {
+  return regionForCountry(country || "VN").currency;
+}
 const TIMEZONES = [
   "Asia/Ho_Chi_Minh", "America/New_York", "America/Los_Angeles", "Asia/Singapore",
   "Europe/London", "Australia/Sydney", "UTC", "Asia/Tokyo", "Europe/Paris",

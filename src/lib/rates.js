@@ -31,6 +31,17 @@ export function convertFromVnd(amountVnd, currency) {
   return m ? amountVnd * m : amountVnd;
 }
 
+/** Đổi giữa HAI đơn vị bất kỳ — dùng cho "sổ sách ghi tiền tệ A, hiển thị tiền tệ B".
+ *  rates[cur] = số đơn vị `cur` đổi được từ 1 VND, nên quy về VND rồi đổi tiếp. */
+export function convert(amount, from = "VND", to = "VND") {
+  const n = Number(amount) || 0;
+  if (from === to) return n;
+  const rFrom = from === "VND" ? 1 : rates[from];
+  const rTo = to === "VND" ? 1 : rates[to];
+  if (!rFrom || !rTo) return n; // thiếu tỷ giá → trả nguyên, đừng bịa số
+  return (n / rFrom) * rTo;
+}
+
 /** "live" (API) | "cache" (API của <24h trước) | "static" (bảng dự phòng) */
 export function ratesSource() { return source; }
 

@@ -9,7 +9,7 @@ import i18n from "./i18n";
 import { saveInvoiceUpload, loadLatestInvoiceUpload, listInvoiceUploads, loadInvoiceUpload, deleteInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
 import { loadAccounts, accountName } from "./lib/accounts";
-import { chartFor } from "./lib/regionDefaults";
+import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines } from "./lib/cashflow";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
@@ -273,8 +273,11 @@ function CashflowDashboard() {
   const { company } = useCompany();
   const currency = company?.currency || "VND";
   const standard = company?.statutoryStandard || "VAS"; // phân loại theo chuẩn nộp cơ quan quản lý
-  const fmtVnd = (m) => fmtMoneyM(m, currency);
-  const fmtTr = (m) => fmtCompactM(m, currency);
+  // Sổ ghi bằng tiền tệ sở tại. Bản chính: ds là số thật hoặc rỗng, không mượn số minh họa.
+  // Bản demo: company null → VN → VND, khớp với DEMO_DS vốn viết bằng VND.
+  const books = booksCurrencyFor(company?.country);
+  const fmtVnd = (m) => fmtMoneyM(m, currency, books);
+  const fmtTr = (m) => fmtCompactM(m, currency, {}, books);
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
   const [scKey, setScKey] = useState("base");
   const [custom, setCustom] = useState({ rev: -0.20, cost: 0.05, delay: 2, haircut: 0.20 });
@@ -2459,7 +2462,9 @@ export function classifyIFRS_INV(ln) {
    Công ty FDI ở VN lập báo cáo IFRS vẫn nộp thuế VN: vẫn phải có MST 10 số, vẫn 0/5/8/10%. */
 export function checkLine_INV(ln, standard = "VAS", currency = "VND", country = "VN") {
   const out = [];
-  const fmtN = (n) => fmtMoney(n, currency);
+  // số trong file ghi bằng tiền tệ sở tại (MISA: VND, QuickBooks: USD), hiển thị theo currency
+  const books = booksCurrencyFor(country);
+  const fmtN = (n) => fmtMoney(n, currency, books);
   const vnTax = (country || "VN") === "VN";
   // 1. cân đối tổng thanh toán
   const calcTotal = Math.round(ln.net + ln.vat);
@@ -2543,8 +2548,9 @@ function InvoiceProcess_INV() {
   const [stdView, setStdView] = useState("statutory");
   const standard = dualStandard && stdView === "reporting" ? reporting : statutory; // → số hiệu tài khoản, cấu trúc bút toán
   const lang = (i18nInst.language || "vi").startsWith("vi") ? "vi" : "en";
-  const fmtVnd_INV = (n) => fmtMoney(n, currency);
-  const fmtTr_INV = (n) => fmtMoneyCompactM(n, currency);
+  const books = booksCurrencyFor(country); // file hóa đơn ghi bằng tiền tệ sở tại, không phải currency hiển thị
+  const fmtVnd_INV = (n) => fmtMoney(n, currency, books);
+  const fmtTr_INV = (n) => fmtMoneyCompactM(n, currency, books);
   const [, setAccTick] = useState(0);
 
   // hệ tài khoản (VAS + IFRS) từ bảng accounts — nạp 1 lần, render lại khi về
