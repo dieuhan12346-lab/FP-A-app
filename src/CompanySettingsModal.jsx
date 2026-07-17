@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X, Plus, ArrowLeft, Pencil, Building2, Check } from "lucide-react";
 import { useCompany } from "./CompanyContext";
-import { updateCompanyName, createCompany, listMyCompanies, switchCompany } from "./lib/company";
+import { updateCompanySettings, createCompany, listMyCompanies, switchCompany } from "./lib/company";
 import CompanyForm from "./CompanyForm";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", red: "#F26D6D" };
@@ -24,13 +24,18 @@ export default function CompanySettingsModal({ onClose }) {
 
   const initial = {
     name: company.name, country: company.country, language: company.language,
-    currency: company.currency, accountingStandard: company.accountingStandard,
+    currency: company.currency,
+    statutoryStandard: company.statutoryStandard, reportingStandard: company.reportingStandard,
     taxRegime: company.taxRegime, timezone: company.timezone,
   };
 
-  // Hồ sơ đã tạo là bất biến — chỉ đổi được tên công ty
+  // Quốc gia/tiền tệ vẫn bất biến; tên và chuẩn kế toán thì sửa được
   const submitEdit = async (values) => {
-    await updateCompanyName(company.id, values.name);
+    await updateCompanySettings(company.id, {
+      name: values.name,
+      statutoryStandard: values.statutoryStandard,
+      reportingStandard: values.reportingStandard,
+    });
     await refresh();
     onClose();
   };
@@ -53,7 +58,12 @@ export default function CompanySettingsModal({ onClose }) {
     } catch (ex) { setErr(ex.message); setBusyId(null); }
   };
 
-  const summary = (c) => [t("country." + c.country), c.currency, c.accountingStandard].filter(Boolean).join(" · ");
+  const summary = (c) => {
+    const std = c.statutoryStandard === c.reportingStandard
+      ? c.statutoryStandard
+      : `${c.statutoryStandard} → ${c.reportingStandard}`;
+    return [t("country." + c.country), c.currency, std].filter(Boolean).join(" · ");
+  };
 
   return createPortal(
     <div style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(4,8,16,.72)", backdropFilter: "blur(3px)", display: "grid", placeItems: "center", padding: 20 }} onClick={onClose}>
@@ -104,7 +114,7 @@ export default function CompanySettingsModal({ onClose }) {
         {mode === "edit" && (
           <>
             <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 16, lineHeight: 1.5 }}>{t("settings.locked.hint")}</div>
-            <CompanyForm initial={initial} lockAllButName onSubmit={submitEdit} submitLabel={t("settings.save")} submittingLabel={t("settings.saving")} />
+            <CompanyForm initial={initial} editing onSubmit={submitEdit} submitLabel={t("settings.save")} submittingLabel={t("settings.saving")} />
             <button onClick={() => setMode("list")} style={{ width: "100%", marginTop: 10, padding: "10px 0", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 12.5, color: C.sub, background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "inherit" }}>
               <ArrowLeft size={14} />{t("settings.backToList")}
             </button>

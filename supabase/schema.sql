@@ -103,11 +103,36 @@ create policy "update member company" on public.companies
     exists (select 1 from public.company_members m where m.company_id = companies.id and m.user_id = auth.uid())
   );
 
--- ============ Immutable company profile ============
--- Hồ sơ công ty là bất biến sau khi tạo: chỉ cột "name" được phép update.
--- Muốn cấu hình khác (quốc gia, tiền tệ, chuẩn kế toán...) thì tạo hồ sơ mới.
+-- ============ Dual accounting standard ============
+-- Chuẩn kế toán KHÔNG suy ra được từ quốc gia và cũng không phải một giá trị duy nhất:
+--   statutory_standard = chuẩn nộp cơ quan quản lý sở tại (VN: VAS/TT200; US: US GAAP)
+--   reporting_standard = chuẩn lập báo cáo cho công ty mẹ/nhà đầu tư
+-- Công ty FDI ở VN điển hình: statutory=VAS + reporting=IFRS.
+alter table public.companies
+  add column if not exists statutory_standard text,
+  add column if not exists reporting_standard text;
+
+-- Chuyển dữ liệu cũ: 1 chuẩn → dùng cho cả hai vai trò.
+update public.companies
+   set statutory_standard = coalesce(statutory_standard, accounting_standard),
+       reporting_standard = coalesce(reporting_standard, accounting_standard)
+ where statutory_standard is null or reporting_standard is null;
+
+alter table public.companies
+  alter column statutory_standard set default 'VAS',
+  alter column reporting_standard set default 'VAS';
+alter table public.companies
+  alter column statutory_standard set not null,
+  alter column reporting_standard set not null;
+
+-- accounting_standard giữ lại để bản cũ đang chạy không gãy giữa lúc deploy; bỏ sau.
+
+-- ============ Company profile: what can change ============
+-- Quốc gia/tiền tệ là căn cước của bộ sổ — đổi thì số liệu cũ vô nghĩa, nên vẫn khoá.
+-- Chuẩn kế toán thì có đổi thật (DN Việt Nam áp dụng IFRS theo lộ trình QĐ 345/QĐ-BTC),
+-- nên cho phép update — bắt tạo hồ sơ mới đồng nghĩa vứt toàn bộ sổ sách.
 revoke update on public.companies from authenticated;
-grant update (name) on public.companies to authenticated;
+grant update (name, statutory_standard, reporting_standard) on public.companies to authenticated;
 
 -- ============ Company switching ============
 -- Hồ sơ đang dùng = hồ sơ có last_used_at mới nhất (chuyển hồ sơ trong modal Hồ sơ công ty).

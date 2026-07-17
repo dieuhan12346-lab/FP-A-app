@@ -9,6 +9,7 @@ import i18n from "./i18n";
 import { saveInvoiceUpload, loadLatestInvoiceUpload, listInvoiceUploads, loadInvoiceUpload, deleteInvoiceUpload } from "./lib/db";
 import { supabase } from "./lib/supabase";
 import { loadAccounts, accountName } from "./lib/accounts";
+import { chartFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines } from "./lib/cashflow";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
@@ -105,7 +106,7 @@ const CLASSIFICATION = [
    Đơn vị vào VND, ra TRIỆU (khớp fmtVnd của module). Chỉ trả về thẻ có dữ liệu. */
 export function buildClassificationReal(data, standard) {
   const M = 1e6;
-  const vas = standard !== "IFRS";
+  const vas = chartFor(standard) === "VAS";
   const lines = data.invoiceLines || [];
   const low = (p) => String(p || "").trim().toLowerCase();
   const isCash = (p) => /^(tm|tiền mặt|tien mat|cash)$/.test(low(p));
@@ -139,7 +140,7 @@ export function buildClassificationReal(data, standard) {
   return merged;
 }
 
-/* Cùng số liệu, mã tài khoản/nhãn theo IFRS — dùng cho công ty accountingStandard === "IFRS" */
+/* Cùng số liệu, mã tài khoản/nhãn theo IFRS — dùng cho công ty không theo VAS (IFRS / US GAAP) */
 const CLASSIFICATION_IFRS = [
   { code: "4000", key: "ifrs.revenue",    count: 312, total: 2180, kind: "in" },
   { code: "1200", key: "ifrs.ar",         count: 148, total: 950,  kind: "in" },
@@ -271,7 +272,7 @@ function CashflowDashboard() {
   const lang = i18nInst.language;
   const { company } = useCompany();
   const currency = company?.currency || "VND";
-  const standard = company?.accountingStandard || "VAS";
+  const standard = company?.statutoryStandard || "VAS"; // phân loại theo chuẩn nộp cơ quan quản lý
   const fmtVnd = (m) => fmtMoneyM(m, currency);
   const fmtTr = (m) => fmtCompactM(m, currency);
   const [selected, setSelected] = useState(() => new Set(["r1", "r2"]));
@@ -296,7 +297,7 @@ function CashflowDashboard() {
   // phân loại TT200/IFRS — khai báo SAU cfData (tránh lỗi TDZ ở bản build production).
   // Bản chính CHỈ dựng từ số thật; chưa có dữ liệu → rỗng (KHÔNG mượn số minh họa).
   const classification = useMemo(() => {
-    if (DEMO_MODE) return standard === "IFRS" ? CLASSIFICATION_IFRS : CLASSIFICATION;
+    if (DEMO_MODE) return chartFor(standard) === "VAS" ? CLASSIFICATION : CLASSIFICATION_IFRS;
     return cfData && cfData.hasReal ? buildClassificationReal(cfData, standard) : [];
   }, [cfData, standard]);
   useEffect(() => {
@@ -2417,7 +2418,7 @@ function debitLine_INV(ln, standard) {
   const p = String(ln.pay || "").trim().toLowerCase();
   const isCash = /^(tm|tiền mặt|tien mat|cash)$/.test(p);
   const isBank = /^(ck|chuyển khoản|chuyen khoan|bank|transfer)$/.test(p);
-  const vas = standard !== "IFRS";
+  const vas = chartFor(standard) === "VAS";
   if (isCash) return { acc: vas ? "111" : "1000", nameKey: "inv.entry.cash", nameVars: {} };
   if (isBank) return { acc: vas ? "112" : "1100", nameKey: "inv.entry.bank", nameVars: {} };
   return {
@@ -2534,8 +2535,13 @@ function InvoiceProcess_INV() {
   const { t, i18n: i18nInst } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
-  const standard = company?.accountingStandard || "VAS"; // → số hiệu tài khoản, cấu trúc bút toán
   const country = company?.country || "VN";              // → luật thuế: định dạng MST, dải thuế suất
+  // Công ty song chuẩn (FDI: nộp VAS, báo cáo mẹ IFRS) xem được bút toán theo cả hai.
+  const statutory = company?.statutoryStandard || "VAS";
+  const reporting = company?.reportingStandard || statutory;
+  const dualStandard = statutory !== reporting;
+  const [stdView, setStdView] = useState("statutory");
+  const standard = dualStandard && stdView === "reporting" ? reporting : statutory; // → số hiệu tài khoản, cấu trúc bút toán
   const lang = (i18nInst.language || "vi").startsWith("vi") ? "vi" : "en";
   const fmtVnd_INV = (n) => fmtMoney(n, currency);
   const fmtTr_INV = (n) => fmtMoneyCompactM(n, currency);
@@ -2698,7 +2704,16 @@ function InvoiceProcess_INV() {
               <div style={{ fontSize: 12.5, color: C_INV.sub, marginTop: 1 }}>{t("inv.subtitle")}</div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 9 }}>
+          <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
+            {dualStandard && (
+              <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: `1px solid ${C_INV.line}` }} title={t("inv.stdView.hint")}>
+                {[["statutory", statutory], ["reporting", reporting]].map(([k, std]) => (
+                  <button key={k} onClick={() => setStdView(k)} style={{ cursor: "pointer", border: "none", padding: "8px 12px", fontSize: 11.5, fontWeight: 800, fontFamily: UI, color: stdView === k ? "#06121f" : C_INV.sub, background: stdView === k ? C_INV.gold : "transparent" }}>
+                    {t("inv.stdView." + k)} · {t("onb.standard." + std)}
+                  </button>
+                ))}
+              </div>
+            )}
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFile} style={{ display: "none" }} />
             {uploads.length > 0 && (
               <button className="btn" onClick={() => setShowHist((v) => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 15px", borderRadius: 10, fontWeight: 700, fontSize: 12.5, color: showHist ? C_INV.gold : C_INV.sub, background: "rgba(255,255,255,.05)", border: `1px solid ${showHist ? C_INV.gold + "66" : C_INV.line}` }}>
@@ -2812,7 +2827,7 @@ function InvoiceProcess_INV() {
 
                 {/* journal entries */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 7, opacity: done("cls") ? 1 : .3, transition: "opacity .4s" }}>
-                  {(standard === "IFRS" ? classifyIFRS_INV : classify_INV)(cur).map((r, i) => (
+                  {(chartFor(standard) === "VAS" ? classify_INV : classifyIFRS_INV)(cur).map((r, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: C_INV.panel2, border: `1px solid ${C_INV.line}` }}>
                       <span className="tnum" style={{ fontSize: 15, fontWeight: 800, color: r.c, width: 42 }}>{r.acc}</span>
                       <span style={{ fontSize: 9.5, fontWeight: 800, color: r.side === "Nợ" ? C_INV.cyan : C_INV.orange, background: (r.side === "Nợ" ? C_INV.cyan : C_INV.orange) + "1f", padding: "2px 7px", borderRadius: 6, width: 32, textAlign: "center" }}>{r.side === "Nợ" ? t("inv.side.no") : t("inv.side.co")}</span>

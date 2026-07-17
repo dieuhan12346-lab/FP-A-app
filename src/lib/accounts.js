@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { chartFor } from "./regionDefaults";
 
 /** Hệ tài khoản dự phòng (đủ cho bút toán bán hàng) — dùng khi Supabase chưa cấu hình
  *  hoặc bảng accounts chưa seed. Bản đầy đủ nằm ở bảng public.accounts (supabase/schema.sql). */
@@ -42,9 +43,11 @@ export function loadAccounts() {
   return loading;
 }
 
-/** Tên tài khoản theo chuẩn + ngôn ngữ; null nếu không có mã này. */
+/** Tên tài khoản theo chuẩn + ngôn ngữ; null nếu không có mã này.
+ *  US GAAP không quy định hệ tài khoản riêng → tra theo hệ tổng quát (chartFor). */
 export function accountName(standard, code, lang) {
   const src = cache || FALLBACK;
-  const a = src[standard] && src[standard][code];
+  const chart = chartFor(standard);
+  const a = src[chart] && src[chart][code];
   return a ? (lang === "vi" ? a.vi : a.en) : null;
 }

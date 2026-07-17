@@ -9,7 +9,9 @@ function normalizeCompany(row) {
     country: row.country,
     language: row.language,
     currency: row.currency,
-    accountingStandard: row.accounting_standard,
+    // DB cũ chỉ có accounting_standard → dùng nó cho cả hai vai trò cho tới khi migrate
+    statutoryStandard: row.statutory_standard || row.accounting_standard || "VAS",
+    reportingStandard: row.reporting_standard || row.accounting_standard || "VAS",
     taxRegime: row.tax_regime,
     timezone: row.timezone,
     createdBy: row.created_by,
@@ -51,14 +53,19 @@ export async function listMyCompanies() {
   return rows.filter((r) => r.companies).map((r) => normalizeCompany(r.companies));
 }
 
-export async function createCompany({ name, country, language, currency, accountingStandard, taxRegime, timezone }) {
+export async function createCompany({ name, country, language, currency, statutoryStandard, reportingStandard, taxRegime, timezone }) {
   if (!supabase) throw new Error("Supabase chưa được cấu hình");
   const { data: userRes, error: eu } = await supabase.auth.getUser();
   if (eu) throw eu;
   const uid = userRes?.user?.id;
   const { data: company, error: e1 } = await supabase
     .from("companies")
-    .insert({ name, country, language, currency, accounting_standard: accountingStandard, tax_regime: taxRegime, timezone, created_by: uid })
+    .insert({
+      name, country, language, currency,
+      statutory_standard: statutoryStandard, reporting_standard: reportingStandard,
+      accounting_standard: statutoryStandard, // cột cũ: giữ đồng bộ cho bản đang chạy
+      tax_regime: taxRegime, timezone, created_by: uid,
+    })
     .select()
     .single();
   if (e1) throw e1;
@@ -81,11 +88,16 @@ export async function switchCompany(companyId) {
   if (error) throw error;
 }
 
-/** Hồ sơ công ty là bất biến sau khi tạo — chỉ được đổi tên.
- *  (Database cũng chặn ở tầng cột: xem phần "immutable" trong supabase/schema.sql.) */
-export async function updateCompanyName(companyId, name) {
+/** Sửa hồ sơ. Quốc gia/tiền tệ vẫn bất biến (đổi thì số liệu cũ vô nghĩa), nhưng tên và
+ *  chuẩn kế toán thì sửa được — công ty có chuyển chuẩn thật.
+ *  (Database chặn ở tầng cột: xem phần grant update trong supabase/schema.sql.) */
+export async function updateCompanySettings(companyId, { name, statutoryStandard, reportingStandard }) {
   if (!supabase) throw new Error("Supabase chưa được cấu hình");
-  const { data, error } = await supabase.from("companies").update({ name }).eq("id", companyId).select().single();
+  const patch = {};
+  if (name != null) patch.name = name;
+  if (statutoryStandard != null) patch.statutory_standard = statutoryStandard;
+  if (reportingStandard != null) patch.reporting_standard = reportingStandard;
+  const { data, error } = await supabase.from("companies").update(patch).eq("id", companyId).select().single();
   if (error) throw error;
   return normalizeCompany(data);
 }

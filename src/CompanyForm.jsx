@@ -13,17 +13,20 @@ const labelStyle = { fontSize: 12, color: C.sub, display: "block", marginBottom:
 const fieldWrap = { marginBottom: 14 };
 
 /** Form dùng chung cho onboarding (tạo công ty) và trang cài đặt (sửa hồ sơ công ty).
- *  lockAllButName: hồ sơ đã tạo là bất biến — chỉ cho sửa tên công ty. */
-export default function CompanyForm({ initial, onSubmit, submitLabel, submittingLabel, lockAllButName = false }) {
+ *  editing: hồ sơ đã tạo — quốc gia/tiền tệ/múi giờ khoá lại (đổi thì số liệu cũ vô nghĩa),
+ *  nhưng tên và hai chuẩn kế toán vẫn sửa được vì công ty có chuyển chuẩn thật. */
+export default function CompanyForm({ initial, onSubmit, submitLabel, submittingLabel, editing = false }) {
   const { t } = useTranslation();
+  const region = regionForCountry(initial?.country || "VN");
   const [name, setName] = useState(initial?.name || "");
   const [country, setCountry] = useState(initial?.country || "VN");
   // ngôn ngữ UI không cho chọn: VN → tiếng Việt, ngoài VN → tiếng Anh
   const language = langForCountry(country);
-  const [currency, setCurrency] = useState(initial?.currency || regionForCountry(initial?.country || "VN").currency);
-  const [accountingStandard, setAccountingStandard] = useState(initial?.accountingStandard || regionForCountry(initial?.country || "VN").accountingStandard);
-  const [taxRegime, setTaxRegime] = useState(initial?.taxRegime || t(regionForCountry(initial?.country || "VN").taxRegimeKey));
-  const [timezone, setTimezone] = useState(initial?.timezone || regionForCountry(initial?.country || "VN").timezone);
+  const [currency, setCurrency] = useState(initial?.currency || region.currency);
+  const [statutoryStandard, setStatutoryStandard] = useState(initial?.statutoryStandard || region.statutoryStandard);
+  const [reportingStandard, setReportingStandard] = useState(initial?.reportingStandard || region.reportingStandard);
+  const [taxRegime, setTaxRegime] = useState(initial?.taxRegime || t(region.taxRegimeKey));
+  const [timezone, setTimezone] = useState(initial?.timezone || region.timezone);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -31,12 +34,13 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
     setCountry(code);
     const r = COUNTRIES.find((c) => c.code === code) || OTHER_REGION;
     setCurrency(r.currency);
-    setAccountingStandard(r.accountingStandard);
+    setStatutoryStandard(r.statutoryStandard);
+    setReportingStandard(r.reportingStandard);
     setTaxRegime(t(r.taxRegimeKey));
     setTimezone(r.timezone);
   };
 
-  const lockedStyle = lockAllButName ? { ...inputStyle, opacity: 0.5, cursor: "not-allowed" } : inputStyle;
+  const lockedStyle = editing ? { ...inputStyle, opacity: 0.5, cursor: "not-allowed" } : inputStyle;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -44,7 +48,7 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
     if (!name.trim()) { setErr(t("onb.err.name")); return; }
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), country, language, currency, accountingStandard, taxRegime, timezone });
+      await onSubmit({ name: name.trim(), country, language, currency, statutoryStandard, reportingStandard, taxRegime, timezone });
     } catch (ex) {
       setErr(ex.message || String(ex));
     } finally {
@@ -61,7 +65,7 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
 
       <div style={fieldWrap}>
         <label style={labelStyle}>{t("onb.country")}</label>
-        <select style={lockedStyle} disabled={lockAllButName} value={country} onChange={(e) => onCountryChange(e.target.value)}>
+        <select style={lockedStyle} disabled={editing} value={country} onChange={(e) => onCountryChange(e.target.value)}>
           {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{t(c.nameKey)}</option>)}
           <option value="OTHER">{t("country.OTHER")}</option>
         </select>
@@ -69,29 +73,40 @@ export default function CompanyForm({ initial, onSubmit, submitLabel, submitting
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={fieldWrap}>
-          <label style={labelStyle}>{t("onb.currency")}</label>
-          <select style={lockedStyle} disabled={lockAllButName} value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          <label style={labelStyle}>{t("onb.standard.statutory")}</label>
+          <select style={inputStyle} value={statutoryStandard} onChange={(e) => setStatutoryStandard(e.target.value)}>
+            {ACCOUNTING_STANDARDS.map((s) => <option key={s} value={s}>{t("onb.standard." + s)}</option>)}
           </select>
         </div>
         <div style={fieldWrap}>
-          <label style={labelStyle}>{t("onb.standard")}</label>
-          <select style={lockedStyle} disabled={lockAllButName} value={accountingStandard} onChange={(e) => setAccountingStandard(e.target.value)}>
+          <label style={labelStyle}>{t("onb.standard.reporting")}</label>
+          <select style={inputStyle} value={reportingStandard} onChange={(e) => setReportingStandard(e.target.value)}>
             {ACCOUNTING_STANDARDS.map((s) => <option key={s} value={s}>{t("onb.standard." + s)}</option>)}
           </select>
         </div>
       </div>
+      <div style={{ fontSize: 11.5, color: C.sub, marginTop: -6, marginBottom: 14, lineHeight: 1.5 }}>
+        {t("onb.standard.hint")}
+      </div>
 
-      <div style={fieldWrap}>
-        <label style={labelStyle}>{t("onb.timezone")}</label>
-        <select style={lockedStyle} disabled={lockAllButName} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-          {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-        </select>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={fieldWrap}>
+          <label style={labelStyle}>{t("onb.currency")}</label>
+          <select style={lockedStyle} disabled={editing} value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={fieldWrap}>
+          <label style={labelStyle}>{t("onb.timezone")}</label>
+          <select style={lockedStyle} disabled={editing} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+            {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+        </div>
       </div>
 
       <div style={fieldWrap}>
         <label style={labelStyle}>{t("onb.tax")}</label>
-        <input style={lockedStyle} disabled={lockAllButName} type="text" value={taxRegime} onChange={(e) => setTaxRegime(e.target.value)} />
+        <input style={lockedStyle} disabled={editing} type="text" value={taxRegime} onChange={(e) => setTaxRegime(e.target.value)} />
       </div>
 
       {err && <div style={{ marginBottom: 12, fontSize: 12.5, color: C.red }}>{err}</div>}
