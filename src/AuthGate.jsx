@@ -32,11 +32,24 @@ export default function AuthGate({ children }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Xoá phần hash rác OAuth để lại sau đăng nhập Google (#access_token=... hoặc chỉ "#").
+  // App không dùng hash để routing nên cắt đi vô hại — chỉ để URL sạch.
+  const cleanAuthHash = () => {
+    // App KHÔNG dùng hash để routing → mọi hash đều là rác OAuth: #access_token=…, #error=…,
+    // hoặc "#" trơ Supabase để lại sau khi nuốt token. Với "#" trơ, location.hash === "" nên
+    // phải kiểm thêm href.endsWith("#").
+    if (window.location.hash || window.location.href.endsWith("#")) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  };
+
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
+    // Hoãn 1 nhịp: Supabase xử lý token trong URL bất đồng bộ, dọn ngay lúc mount là quá sớm.
+    const t = setTimeout(cleanAuthHash, 0);
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => { setSession(s); cleanAuthHash(); });
+    return () => { clearTimeout(t); sub.subscription.unsubscribe(); };
   }, []);
 
   // Chưa cấu hình .env.local: cho app chạy bình thường, hiện nhắc nhở nhỏ
@@ -104,7 +117,7 @@ export default function AuthGate({ children }) {
             <input style={{ ...inputStyle, marginBottom: 14 }} type="text" required minLength={2} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("auth.name.ph")} />
           </>}
           <label style={{ fontSize: 12.5, color: C.sub, display: "block", marginBottom: 6 }}>{t("auth.email")}</label>
-          <input style={inputStyle} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@congty.vn" />
+          <input style={inputStyle} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t("auth.email.ph")} />
           <label style={{ fontSize: 12.5, color: C.sub, display: "block", margin: "14px 0 6px" }}>{t("auth.password")}</label>
           <input style={inputStyle} type="password" required minLength={6} value={pw} onChange={(e) => setPw(e.target.value)} placeholder="••••••••" />
           {err && <div style={{ marginTop: 12, fontSize: 12.5, color: C.red }}>{err}</div>}

@@ -5,8 +5,8 @@ import en from "./locales/en.json";
 
 i18n.use(initReactI18next).init({
   resources: { vi: { translation: vi }, en: { translation: en } },
-  lng: "vi", // tạm cho tới khi biết hồ sơ công ty; applyCompanyUiLanguage sẽ chốt
-  fallbackLng: "vi",
+  lng: "en", // mặc định trước khi biết hồ sơ (màn đăng nhập); applyCompanyUiLanguage chốt lại theo quốc gia sau khi đăng nhập
+  fallbackLng: "en",
   interpolation: { escapeValue: false, prefix: "{", suffix: "}" },
 });
 
