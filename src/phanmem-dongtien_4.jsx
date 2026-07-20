@@ -33,6 +33,7 @@ function LuxoraHex({ size = 34 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" fill="#2563EB" aria-hidden="true">
       <path fillRule="evenodd" d="M50 3 90.7 26.5 90.7 73.5 50 97 9.3 73.5 9.3 26.5Z M50 20 76 35 76 65 50 80 24 65 24 35Z" />
+      <path fill="#FFFFFF" d="M50 20 76 35 76 65 50 80 24 65 24 35Z" />
       <path fillRule="evenodd" d="M50 28 69 39 69 61 50 72 31 61 31 39Z M50 37 61.3 43.5 61.3 56.5 50 63 38.7 56.5 38.7 43.5Z" />
     </svg>
   );
