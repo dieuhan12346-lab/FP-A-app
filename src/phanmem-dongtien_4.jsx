@@ -11,6 +11,7 @@ import { supabase } from "./lib/supabase";
 import { loadAccounts, accountName } from "./lib/accounts";
 import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines } from "./lib/cashflow";
+import { fetchForecast } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
 import { useCompany } from "./CompanyContext";
@@ -694,13 +695,13 @@ const SCEN_FPA = {
   stress: { name: "Stress-test", icon: CloudLightning, color: C_FPA.red, rev: -0.28, cost: 0.09, label: "fpa.scen.stress" },
 };
 
-function buildForecast_FPA() {
+function buildForecast_FPA(startCash = START_FPA, inflow = INFLOW_FPA, outflow = OUTFLOW_FPA) {
   // each scenario: cumulative balance + p10/p90 band on base
   const out = {};
   for (const key of Object.keys(SCEN_FPA)) {
-    const s = SCEN_FPA[key]; let bal = START_FPA; const arr = [];
+    const s = SCEN_FPA[key]; let bal = startCash; const arr = [];
     for (let i = 0; i < 13; i++) {
-      bal += INFLOW_FPA[i] * (1 + s.rev) - OUTFLOW_FPA[i] * (1 + s.cost);
+      bal += inflow[i] * (1 + s.rev) - outflow[i] * (1 + s.cost);
       arr.push(Math.round(bal));
     }
     out[key] = arr;
@@ -749,16 +750,143 @@ const SEV_FPA = {
   low:    { c: C_FPA.gold,   soft: C_FPA.goldSoft,   label: "fpa.sev.low" },
 };
 
+/* ---------- SỐ THẬT cho FP&A ----------
+   Dùng chung nguồn với Cash Flow: buildRealDS(cfData) → recv/outflow/startCash (triệu đồng).
+   Tiền vào mỗi tuần = thu hồi công nợ kỳ vọng Σ(amount × xác suất thu) theo tuần dự kiến thu. */
+function buildFpaReal(cfData) {
+  const rds = buildRealDS(cfData);
+  const inflow = Array(13).fill(0);
+  for (const r of rds.recv) inflow[clamp(r.collectWeek, 0, 12)] += r.amount * r.p;
+  return { startCash: rds.startCash, inflow, outflow: rds.outflow, recv: rds.recv };
+}
+
+/* Cảnh báo rủi ro sinh từ số thật + dự báo (thay cho ALERTS_FPA cứng).
+   metricM tính bằng TRIỆU (khớp fmtCompactM của module). */
+function buildAlertsReal(cfData, fc) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const out = [];
+  // 1. Thanh khoản: kịch bản chạm âm → mức đáy + tuần
+  const baseTr = fc.troughs.base, stressTr = fc.troughs.stress;
+  const hitNeg = baseTr.m < 0 ? { tr: baseTr, scen: "Base" } : stressTr.m < 0 ? { tr: stressTr, scen: "Stress" } : null;
+  if (hitNeg) {
+    out.push({
+      id: "liq", sev: baseTr.m < 0 ? "high" : "medium", icon: Wallet,
+      title: "fpa.real.liq.t",
+      detail: { k: "fpa.real.liq.d", o: { scen: hitNeg.scen, w: hitNeg.tr.w + 1 } },
+      eta: { k: "fpa.real.week", o: { w: hitNeg.tr.w + 1 } },
+      metricM: hitNeg.tr.m,
+    });
+  }
+  // 2. Công nợ quá hạn
+  const open = (cfData.receivables || []).filter((r) => r.status !== "paid");
+  const overdue = open.filter((r) => new Date(r.dueDate) < today);
+  if (overdue.length) {
+    out.push({
+      id: "od", sev: "medium", icon: Users,
+      title: "fpa.real.od.t",
+      detail: { k: "fpa.real.od.d", o: { n: overdue.length } },
+      eta: "fpa.real.now",
+      metricM: overdue.reduce((s, r) => s + (Number(r.amount) || 0), 0) / 1e6,
+    });
+  }
+  // 3. Tập trung công nợ: một khách hàng chiếm ≥30% tổng phải thu
+  const totalAR = open.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  if (totalAR > 0 && open.length > 1) {
+    const byCust = {};
+    for (const r of open) byCust[r.customer] = (byCust[r.customer] || 0) + (Number(r.amount) || 0);
+    let topName = "", topAmt = 0;
+    for (const [n, a] of Object.entries(byCust)) if (a > topAmt) { topAmt = a; topName = n; }
+    const share = topAmt / totalAR;
+    if (share >= 0.3) {
+      out.push({
+        id: "conc", sev: share >= 0.5 ? "high" : "medium", icon: Users,
+        title: "fpa.real.conc.t",
+        detail: { k: "fpa.real.conc.d", o: { name: topName, pct: Math.round(share * 100) } },
+        eta: "fpa.real.exposure",
+        metricM: topAmt / 1e6,
+      });
+    }
+  }
+  return out;
+}
+
+/* Chuyển kết quả dịch vụ ML (inflow/outflow/balance + khoảng tin cậy) thành cấu trúc chart.
+   base = đường ML thật; Best/Stress = áp hệ số SCEN_FPA lên dòng tiền ML đã dự báo (stress-test trên số thật). */
+function mlToForecast(ml, startCash) {
+  const H = ml.inflow.length;
+  const out = {};
+  for (const key of Object.keys(SCEN_FPA)) {
+    const s = SCEN_FPA[key]; let bal = startCash; const arr = [];
+    for (let i = 0; i < H; i++) { bal += ml.inflow[i] * (1 + s.rev) - ml.outflow[i] * (1 + s.cost); arr.push(Math.round(bal)); }
+    out[key] = arr;
+  }
+  const series = out.base.map((b, i) => ({
+    name: `T${i + 1}`, idx: i,
+    base: b, best: out.best[i], stress: out.stress[i],
+    lo: Math.round(ml.balance_lo[i]), hi: Math.round(ml.balance_hi[i]),
+    band: [Math.round(ml.balance_lo[i]), Math.round(ml.balance_hi[i])],
+  }));
+  const trough = (a) => { let m = Infinity, w = 0; a.forEach((v, i) => { if (v < m) { m = v; w = i; } }); return { m, w }; };
+  return {
+    series,
+    troughs: { best: trough(out.best), base: trough(out.base), stress: trough(out.stress) },
+    firstNeg: { best: out.best.findIndex((v) => v < 0), base: out.base.findIndex((v) => v < 0), stress: out.stress.findIndex((v) => v < 0) },
+    ml: true, model: ml.model_in, mape: ml.mape_in,
+  };
+}
+
 function FpaAutomation() {
   const { t } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
-  const fmtVnd_FPA = (m) => fmtMoneyM(m, currency);
-  const fmtTr_FPA = (m) => fmtCompactM(m, currency);
+  const books = booksCurrencyFor(company?.country); // sổ ghi theo tiền tệ sở tại
+  const fmtVnd_FPA = (m) => fmtMoneyM(m, currency, books);
+  const fmtTr_FPA = (m) => fmtCompactM(m, currency, {}, books);
+  const tt = (x) => (typeof x === "string" ? t(x) : t(x.k, x.o)); // key thường | {k,o} có tham số
   const [synced, setSynced] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [activeScen, setActiveScen] = useState({ best: true, base: true, stress: true });
-  const fc = useMemo(buildForecast_FPA, []);
+  const [cfData, setCfData] = useState(null);      // dữ liệu thật từ Supabase (null = chưa tải)
+  const [showData, setShowData] = useState(false); // modal nhập liệu (dùng chung với Cash Flow)
+  const [ml, setMl] = useState(null);              // kết quả dịch vụ ML (null = chưa gọi/không dùng)
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlErr, setMlErr] = useState("");
+
+  const reloadFpa = () => {
+    if (!company?.id) { setCfData(null); return; }
+    fetchCashflowData(company.id).then(setCfData).catch(() => setCfData(null));
+  };
+  useEffect(() => { setCfData(null); reloadFpa(); }, [company?.id]);
+
+  // Dataset: DEMO giữ số minh họa; bản chính CHỈ dùng số thật (chưa nhập → rỗng, không mượn demo).
+  const dataset = useMemo(() => {
+    if (DEMO_MODE) return { startCash: START_FPA, inflow: INFLOW_FPA, outflow: OUTFLOW_FPA, recv: null, real: false, empty: false };
+    if (cfData && cfData.hasReal) return { ...buildFpaReal(cfData), real: true, empty: false };
+    return { startCash: 0, inflow: Array(13).fill(0), outflow: Array(13).fill(0), recv: [], real: true, empty: true };
+  }, [cfData]);
+
+  // Gọi dịch vụ ML (XGBoost) khi có dữ liệu thật. Lỗi/thiếu lịch sử → fallback dự báo công nợ cam kết.
+  useEffect(() => {
+    if (DEMO_MODE || !company?.id || !(cfData && cfData.hasReal)) { setMl(null); setMlErr(""); return; }
+    let live = true;
+    setMlLoading(true); setMlErr("");
+    fetchForecast(company.id, dataset.startCash, 13)
+      .then((r) => { if (!live) return; setMl(r && !r.empty && r.inflow ? r : null); if (r && r.empty) setMlErr("empty"); })
+      .catch((e) => { if (live) { setMl(null); setMlErr(e.message || "err"); } })
+      .finally(() => { if (live) setMlLoading(false); });
+    return () => { live = false; };
+    // eslint-disable-next-line
+  }, [cfData, company?.id]);
+
+  // Chart: ưu tiên forecast ML thật; chưa có → dựng từ công nợ cam kết (vẫn số thật).
+  const fc = useMemo(
+    () => (ml && ml.inflow ? mlToForecast(ml, dataset.startCash) : buildForecast_FPA(dataset.startCash, dataset.inflow, dataset.outflow)),
+    [ml, dataset]
+  );
+  const alerts = useMemo(() => {
+    if (DEMO_MODE) return ALERTS_FPA;
+    return dataset.empty ? [] : buildAlertsReal(cfData, fc);
+  }, [cfData, fc, dataset]);
 
   useEffect(() => {
     const l = document.createElement("link"); l.rel = "stylesheet";
@@ -773,7 +901,15 @@ function FpaAutomation() {
   const toggleScen = (k) => setActiveScen((s) => ({ ...s, [k]: !s[k] }));
 
   const yVals = fc.series.flatMap((d) => [d.lo, d.hi, d.best, d.stress]);
-  const yMin = Math.min(0, ...yVals); const yMax = Math.max(START_FPA, ...yVals);
+  const yMin = Math.min(0, ...yVals); const yMax = Math.max(dataset.startCash, ...yVals);
+
+  // Nhãn nguồn dự báo — trung thực (thay "LSTM" giả). Model + MAPE thật khi có ML.
+  const mlStatus = DEMO_MODE
+    ? { text: t("fpa.p1.badge"), color: C_FPA.violet }
+    : mlLoading ? { text: t("fpa.ml.loading"), color: C_FPA.sub }
+    : (fc.ml && fc.model === "xgboost") ? { text: fc.mape != null ? `XGBoost · MAPE ${Math.round(fc.mape)}%` : "XGBoost", color: C_FPA.violet }
+    : (fc.ml && fc.model === "baseline") ? { text: t("fpa.ml.baseline"), color: C_FPA.gold }
+    : { text: t("fpa.ml.committed"), color: C_FPA.gold };
 
   return (
     <div style={{ fontFamily: UI_FPA, color: C_FPA.txt }}>
@@ -808,6 +944,22 @@ function FpaAutomation() {
           {t("fpa.intro1")} <b style={{ color: C_FPA.violet }}>{t("fpa.intro.ml")}</b> {t("fpa.intro.mld")} → <b style={{ color: C_FPA.gold }}>{t("fpa.intro.scen")}</b> → <b style={{ color: C_FPA.red }}>{t("fpa.intro.risk")}</b> {t("fpa.intro.end")}
         </p>
 
+        {/* DỮ LIỆU THẬT — thanh nhập liệu (dùng chung với Cash Flow); ẩn ở bản DEMO */}
+        {!DEMO_MODE && (
+          <>
+            {showData && <CashflowDataModal companyId={company?.id} data={cfData} onChanged={reloadFpa} onClose={() => setShowData(false)} />}
+            <div className="card" style={{ background: C_FPA.panel, border: dataset.empty ? `1.5px dashed ${C_FPA.orange}55` : `1px solid ${C_FPA.line}`, borderRadius: 14, padding: "13px 15px", marginBottom: 16, display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap" }}>
+              <div style={{ width: 38, height: 38, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: dataset.empty ? C_FPA.orangeSoft : C_FPA.goldSoft }}><Database size={18} color={dataset.empty ? C_FPA.orange : C_FPA.gold} /></div>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontWeight: 800, fontSize: 13.5 }}>{t(dataset.empty ? "cf.empty.title" : "cf.data.bar.title")}</div>
+                <div style={{ fontSize: 12, color: C_FPA.sub, marginTop: 3, lineHeight: 1.5 }}>{t(dataset.empty ? "cf.empty.desc" : "cf.data.bar.desc")}</div>
+              </div>
+              <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px", borderRadius: 10, fontWeight: 800, fontSize: 12.5, color: "#1a1206", background: `linear-gradient(135deg, ${C_FPA.gold}, #C9892A)` }}><Database size={14} />{t("cf.data.button")}</button>
+            </div>
+          </>
+        )}
+
+        {dataset.empty ? null : (<>
         {/* PILLAR — full-width forecast */}
         <div style={{ display: "block" }}>
           {/* ML FORECAST + SCENARIOS */}
@@ -815,9 +967,14 @@ function FpaAutomation() {
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 3, flexWrap: "wrap" }}>
               <span style={{ ...pillBadge_FPA, background: C_FPA.violetSoft, color: C_FPA.violet }}>01</span>
               <Cpu size={17} color={C_FPA.violet} /><h3Fpa style={h3Fpa}>{t("fpa.p1.title")}</h3Fpa>
-              <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C_FPA.violet, background: C_FPA.violetSoft, padding: "5px 11px", borderRadius: 8 }}><Brain size={12} />{t("fpa.p1.badge")}</span>
+              <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: mlStatus.color, background: mlStatus.color + "1c", padding: "5px 11px", borderRadius: 8 }}><Brain size={12} />{mlStatus.text}</span>
             </div>
             <div style={{ fontSize: 12.3, color: C_FPA.sub, margin: "4px 0 10px" }}>{t("fpa.p1.desc")}</div>
+            {!DEMO_MODE && !mlLoading && !fc.ml && dataset.real && !dataset.empty && (
+              <div style={{ fontSize: 11.5, color: C_FPA.gold, margin: "0 0 10px", display: "flex", gap: 6, alignItems: "flex-start", lineHeight: 1.5 }}>
+                <AlertTriangle size={13} style={{ flex: "0 0 auto", marginTop: 1 }} />{mlErr && mlErr !== "empty" ? t("fpa.ml.errNote") : t("fpa.ml.committedNote")}
+              </div>
+            )}
 
             {/* scenario toggles */}
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -859,7 +1016,8 @@ function FpaAutomation() {
             </div>
           </section>
 
-          {/* MACRO_FPA SIGNALS — full-width row */}
+          {/* MACRO_FPA SIGNALS — full-width row; chỉ hiện ở DEMO (không lấy được số vĩ mô thật từ DB) */}
+          {DEMO_MODE && (
           <section className="card" style={{ ...panel, marginTop: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
               <span style={{ ...pillBadge_FPA, background: C_FPA.goldSoft, color: C_FPA.gold }}>02</span>
@@ -893,6 +1051,7 @@ function FpaAutomation() {
               </div>
             </div>
           </section>
+          )}
         </div>
 
         {/* PILLAR 4: RISK DETECTION */}
@@ -902,33 +1061,40 @@ function FpaAutomation() {
             <Bell size={17} color={C_FPA.red} /><h3Fpa style={h3Fpa}>{t("fpa.p3.title")}</h3Fpa>
             <span className="live" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C_FPA.red, background: C_FPA.redSoft, padding: "5px 11px", borderRadius: 8 }}><Search size={12} />{t("fpa.scanning")}</span>
             <span style={{ marginLeft: "auto", fontSize: 12, color: C_FPA.sub }}>
-              <b style={{ color: C_FPA.red }}>{ALERTS_FPA.filter((a) => a.sev === "high").length}</b> {t("fpa.urgent")} · <b style={{ color: C_FPA.orange }}>{ALERTS_FPA.filter((a) => a.sev === "medium").length}</b> {t("fpa.warns")}
+              <b style={{ color: C_FPA.red }}>{alerts.filter((a) => a.sev === "high").length}</b> {t("fpa.urgent")} · <b style={{ color: C_FPA.orange }}>{alerts.filter((a) => a.sev === "medium").length}</b> {t("fpa.warns")}
             </span>
           </div>
           <div style={{ fontSize: 12.3, color: C_FPA.sub, marginBottom: 14 }}>
             {t("fpa.p3.desc1")} <b style={{ color: C_FPA.txt }}>{t("fpa.p3.desc2")}</b>.
           </div>
+          {alerts.length === 0 ? (
+            <div style={{ padding: "16px 14px", borderRadius: 13, background: C_FPA.panel2, border: `1px solid ${C_FPA.line}`, display: "flex", alignItems: "center", gap: 10, color: C_FPA.sub, fontSize: 12.5 }}>
+              <ShieldCheck size={17} color={C_FPA.green} />{t("fpa.real.none")}
+            </div>
+          ) : (
           <div style={{ display: "grid", gap: 11, gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))" }}>
-            {ALERTS_FPA.map((a) => { const sev = SEV_FPA[a.sev]; const Ic = a.icon; return (
+            {alerts.map((a) => { const sev = SEV_FPA[a.sev]; const Ic = a.icon; return (
               <div key={a.id} style={{ padding: "13px 14px", borderRadius: 13, background: C_FPA.panel2, borderLeft: `4px solid ${sev.c}`, border: `1px solid ${C_FPA.line}`, borderLeftWidth: 4, borderLeftColor: sev.c }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 9, flex: "0 0 auto", display: "grid", placeItems: "center", background: sev.soft }}><Ic size={16} color={sev.c} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 700, fontSize: 13 }}>{t(a.title)}</span>
+                      <span style={{ fontWeight: 700, fontSize: 13 }}>{tt(a.title)}</span>
                       <span style={{ fontSize: 9.5, fontWeight: 800, color: sev.c, background: sev.soft, padding: "2px 7px", borderRadius: 5 }}>{t(sev.label)}</span>
                     </div>
-                    <div style={{ fontSize: 11.5, color: C_FPA.sub, marginTop: 4, lineHeight: 1.5 }}>{t(a.detail)}</div>
+                    <div style={{ fontSize: 11.5, color: C_FPA.sub, marginTop: 4, lineHeight: 1.5 }}>{tt(a.detail)}</div>
                   </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 11, paddingTop: 10, borderTop: `1px solid ${C_FPA.line}` }}>
-                  <span style={{ fontSize: 10.5, color: C_FPA.sub, display: "inline-flex", alignItems: "center", gap: 5 }}><Clock size={11} />{t(a.eta)}</span>
-                  <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: sev.c }}>{a.metricM != null ? fmtCompactM(a.metricM, currency) : a.metric.startsWith("fpa.") ? t(a.metric) : a.metric}</span>
+                  <span style={{ fontSize: 10.5, color: C_FPA.sub, display: "inline-flex", alignItems: "center", gap: 5 }}><Clock size={11} />{tt(a.eta)}</span>
+                  <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: sev.c }}>{a.metricM != null ? fmtTr_FPA(a.metricM) : a.metric.startsWith("fpa.") ? t(a.metric) : a.metric}</span>
                 </div>
               </div>
             ); })}
           </div>
+          )}
         </section>
+        </>)}
 
         <footer style={{ marginTop: 18, fontSize: 11.5, color: C_FPA.sub, textAlign: "center", lineHeight: 1.6 }}>
           {t("fpa.footer")}
@@ -947,8 +1113,9 @@ function TipBox_FPA({ active, payload, activeScen }) {
   const { t } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
-  const fmtVnd_FPA = (m) => fmtMoneyM(m, currency);
-  const fmtTr_FPA = (m) => fmtCompactM(m, currency);
+  const books = booksCurrencyFor(company?.country);
+  const fmtVnd_FPA = (m) => fmtMoneyM(m, currency, books);
+  const fmtTr_FPA = (m) => fmtCompactM(m, currency, {}, books);
   if (!active || !payload || !payload.length) return null; const d = payload[0].payload;
   return (
     <div style={{ background: "#0A0F1C", border: `1px solid ${C_FPA.line}`, borderRadius: 12, padding: "10px 12px", fontFamily: UI_FPA, boxShadow: "0 14px 30px rgba(0,0,0,.5)", minWidth: 180 }}>
@@ -2896,7 +3063,7 @@ function useT() { return useTranslation(); }
 
 const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
-  { id: "fpa", key: "fpa", icon: Brain, c: C.cyan, demo: true },
+  { id: "fpa", key: "fpa", icon: Brain, c: C.cyan },
   { id: "ops", key: "ops", icon: Bot, c: C.green, demo: true },
   { id: "credit", key: "credit", icon: Gauge, c: C.violet, demo: true },
   { id: "collect", key: "collect", icon: Bell, c: C.orange, demo: true },

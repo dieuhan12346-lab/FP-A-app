@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X, Plus, Wallet, TrendingUp, TrendingDown, Check, RotateCcw, FileSpreadsheet } from "lucide-react";
 import { addReceivable, addPayable, setReceivableStatus, setPayableStatus, deleteReceivable, deletePayable, saveOpeningCash } from "./lib/cashflow";
+import LedgerImportSection from "./LedgerImportSection";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", gold: "#E8B34B", red: "#F26D6D", cyan: "#39B8D8" };
 
@@ -84,6 +85,9 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
         <div style={{ fontSize: 12, color: C.sub, marginBottom: 18, lineHeight: 1.5 }}>{t("cf.data.subtitle")}</div>
 
         {err && <div style={{ marginBottom: 14, padding: "9px 13px", borderRadius: 9, fontSize: 12.5, color: C.red, background: C.red + "14", border: `1px solid ${C.red}44` }}>⚠ {err}</div>}
+
+        {/* Nhập sổ quỹ từ ERP (MISA) → bảng transactions, nguồn lịch sử cho dự báo */}
+        <LedgerImportSection companyId={companyId} onImported={onChanged} C={C} inp={inp} />
 
         {/* Số dư đầu kỳ */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
