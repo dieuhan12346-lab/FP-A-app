@@ -965,7 +965,6 @@ function FpaAutomation() {
           {/* ML FORECAST + SCENARIOS */}
           <section className="card" style={panelFpa}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 3, flexWrap: "wrap" }}>
-              <span style={{ ...pillBadge_FPA, background: C_FPA.violetSoft, color: C_FPA.violet }}>01</span>
               <Cpu size={17} color={C_FPA.violet} /><h3Fpa style={h3Fpa}>{t("fpa.p1.title")}</h3Fpa>
               <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: mlStatus.color, background: mlStatus.color + "1c", padding: "5px 11px", borderRadius: 8 }}><Brain size={12} />{mlStatus.text}</span>
             </div>
@@ -1015,49 +1014,11 @@ function FpaAutomation() {
               ); })}
             </div>
           </section>
-
-          {/* MACRO_FPA SIGNALS — full-width row; chỉ hiện ở DEMO (không lấy được số vĩ mô thật từ DB) */}
-          {DEMO_MODE && (
-          <section className="card" style={{ ...panel, marginTop: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-              <span style={{ ...pillBadge_FPA, background: C_FPA.goldSoft, color: C_FPA.gold }}>02</span>
-              <Activity size={16} color={C_FPA.gold} /><h3Fpa style={{ ...h3, fontSize: 15 }}>{t("fpa.p2.title")}</h3Fpa>
-            </div>
-            <div style={{ fontSize: 11.8, color: C_FPA.sub, marginBottom: 13 }}>{t("fpa.p2.desc")}</div>
-            <div style={{ display: "grid", gap: 11, gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))" }}>
-              {MACRO_FPA.map((m) => { const Ic = m.icon; return (
-                <div key={m.id} style={{ padding: "11px 13px", borderRadius: 11, background: C_FPA.panel2, border: `1px solid ${C_FPA.line}` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 7, display: "grid", placeItems: "center", background: m.color + "22" }}><Ic size={15} color={m.color} /></div>
-                    <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{t(m.name)}</span>
-                    <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: m.dir === "up" ? C_FPA.red : m.dir === "down" ? C_FPA.green : C_FPA.sub }}>{m.value}</span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 10, color: C_FPA.sub, width: 50 }}>{t("fpa.influence")}</span>
-                    <div style={{ flex: 1, height: 6, borderRadius: 4, background: "rgba(255,255,255,.07)", overflow: "hidden" }}>
-                      <div style={{ width: `${m.weight * 100 / 0.3 * 0.85}%`, height: "100%", background: m.color, borderRadius: 4 }} />
-                    </div>
-                    <span className="tnum" style={{ fontSize: 10.5, color: C_FPA.sub, width: 28, textAlign: "right" }}>{Math.round(m.weight * 100)}%</span>
-                  </div>
-                </div>
-              ); })}
-            </div>
-            <div style={{ marginTop: 13 }}>
-              <div style={{ padding: "11px 13px", borderRadius: 11, background: C_FPA.violetSoft, border: `1px solid ${C_FPA.violet}33`, display: "flex", gap: 9, alignItems: "flex-start" }}>
-                <Zap size={15} color={C_FPA.violet} style={{ flex: "0 0 auto", marginTop: 1 }} />
-                <div style={{ fontSize: 11.3, color: C_FPA.txt, lineHeight: 1.5 }}>
-                  <b style={{ color: C_FPA.violet }}>{t("fpa.signal")}</b> {t("fpa.signalText")}
-                </div>
-              </div>
-            </div>
-          </section>
-          )}
         </div>
 
         {/* PILLAR 4: RISK DETECTION */}
         <section className="card" style={{ ...panel, marginTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 3, flexWrap: "wrap" }}>
-            <span style={{ ...pillBadge_FPA, background: C_FPA.redSoft, color: C_FPA.red }}>03</span>
             <Bell size={17} color={C_FPA.red} /><h3Fpa style={h3Fpa}>{t("fpa.p3.title")}</h3Fpa>
             <span className="live" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C_FPA.red, background: C_FPA.redSoft, padding: "5px 11px", borderRadius: 8 }}><Search size={12} />{t("fpa.scanning")}</span>
             <span style={{ marginLeft: "auto", fontSize: 12, color: C_FPA.sub }}>
