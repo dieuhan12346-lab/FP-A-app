@@ -268,7 +268,7 @@
   "fpa.ml.errNote": "Không gọi được dịch vụ dự báo — đang dùng dự báo từ công nợ cam kết.",
   "fpa.ml.committedNote": "Chưa có lịch sử giao dịch cho mô hình học máy — đang dự báo từ công nợ cam kết. Nhập sổ quỹ (Cash Flow → Nhập dữ liệu) để bật dự báo học máy.",
   "led.title": "Nhập sổ quỹ / sổ cái từ ERP",
-  "led.desc": "Xuất sổ quỹ / sổ cái (MISA S07-DN, QuickBooks, SAP, Xero) hoặc sao kê ngân hàng ra Excel rồi tải lên. Hệ thống tự nhận cột — lệch thì bấm Chỉnh cột. Giao dịch thu/chi theo ngày thành lịch sử cho dự báo.",
+  "led.desc": "Xuất sổ quỹ / sổ cái (MISA, QuickBooks, SAP, Xero) hoặc sao kê ngân hàng ra Excel rồi tải lên. Hệ thống tự nhận cột — lệch thì bấm Chỉnh cột. Giao dịch thu/chi theo ngày thành lịch sử cho dự báo.",
   "led.upload": "Tải file Excel (sổ cái / sao kê)",
   "led.remap": "Chỉnh cột",
   "led.mapHint": "Tự nhận cột chưa đúng? Gán lại thủ công bên dưới.",

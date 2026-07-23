@@ -268,7 +268,7 @@
   "fpa.ml.errNote": "Forecast service unavailable — using committed AR/AP projection.",
   "fpa.ml.committedNote": "No transaction history for the ML model yet — projecting from committed AR/AP. Import a cash book (Cash Flow → Enter data) to enable ML forecasting.",
   "led.title": "Import cash book / ledger from ERP",
-  "led.desc": "Export a cash book / general ledger (MISA S07-DN, QuickBooks, SAP, Xero) or a bank statement to Excel and upload it. Columns are auto-detected — click Adjust columns if off. Dated cash in/out becomes history for the forecast.",
+  "led.desc": "Export a cash book / general ledger (MISA, QuickBooks, SAP, Xero) or a bank statement to Excel and upload it. Columns are auto-detected — click Adjust columns if off. Dated cash in/out becomes history for the forecast.",
   "led.upload": "Upload Excel (ledger / statement)",
   "led.remap": "Adjust columns",
   "led.mapHint": "Auto-detect off? Map columns manually below.",
