@@ -18,6 +18,9 @@ export function fmtMoney(amount, display = "VND", books = "VND") {
   return SUFFIX_CURRENCY.has(display) ? `${n} ${symbol}` : `${symbol}${n}`;
 }
 
+/** Ký hiệu tiền tệ theo mã: VND→₫, USD→$, GBP→£… (mã lạ → chính mã đó). */
+export function moneySymbol(cur = "VND") { return SYMBOL[cur] || cur; }
+
 /** Số đã tính theo TRIỆU đơn vị sổ sách → chuỗi tiền tệ đầy đủ. */
 export function fmtMoneyM(amountInMillions, display = "VND", books = "VND") {
   return fmtMoney((Number(amountInMillions) || 0) * 1e6, display, books);

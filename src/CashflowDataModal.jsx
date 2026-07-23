@@ -4,13 +4,19 @@ import { useTranslation } from "react-i18next";
 import { X, Plus, Wallet, TrendingUp, TrendingDown, Check, RotateCcw, FileSpreadsheet } from "lucide-react";
 import { addReceivable, addPayable, setReceivableStatus, setPayableStatus, deleteReceivable, deletePayable, saveOpeningCash } from "./lib/cashflow";
 import LedgerImportSection from "./LedgerImportSection";
+import { fmtMoney, moneySymbol } from "./lib/money";
+import { booksCurrencyFor, chartFor } from "./lib/regionDefaults";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", gold: "#E8B34B", red: "#F26D6D", cyan: "#39B8D8" };
 
 const inp = { padding: "8px 11px", borderRadius: 9, fontSize: 12.5, color: C.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C.line}`, outline: "none", fontFamily: "inherit" };
 
-export default function CashflowDataModal({ companyId, data, onChanged, onClose }) {
+export default function CashflowDataModal({ company, companyId, data, onChanged, onClose }) {
   const { t } = useTranslation();
+  const currency = company?.currency || "VND";
+  const books = booksCurrencyFor(company?.country);
+  const fmtAmt = (v) => fmtMoney(Number(v) || 0, currency, books);
+  const cashAccts = chartFor(company?.statutoryStandard || "VAS") === "VAS" ? "111+112" : "1000+1100";
   const [err, setErr] = useState("");
   const [opening, setOpening] = useState(data?.openingCash ?? 0);
   const [savingOpen, setSavingOpen] = useState(false);
@@ -62,7 +68,7 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
             {isRecv && item.source === "invoice" && <span title={t("cf.data.fromInvoice")} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 5, color: C.cyan, background: C.cyan + "1c" }}><FileSpreadsheet size={9} />HĐ{item.invoiceNo ? " " + item.invoiceNo : ""}</span>}
             {!isRecv && <span style={{ flex: "0 0 auto", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 5, color: C.gold, background: C.gold + "1c" }}>{t("cf.cat." + (item.category || "other"))}</span>}
           </div>
-          <div className="tnum" style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>{(Number(item.amount) || 0).toLocaleString("vi-VN")} ₫ · {t("cf.data.due")} {item.dueDate}</div>
+          <div className="tnum" style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>{fmtAmt(item.amount)} · {t("cf.data.due")} {item.dueDate}</div>
         </div>
         <button onClick={() => run(() => (isRecv ? setReceivableStatus : setPayableStatus)(item.id, paid ? "open" : "paid"))}
           title={paid ? t("cf.data.reopen") : t("cf.data.markPaid")}
@@ -87,14 +93,14 @@ export default function CashflowDataModal({ companyId, data, onChanged, onClose 
         {err && <div style={{ marginBottom: 14, padding: "9px 13px", borderRadius: 9, fontSize: 12.5, color: C.red, background: C.red + "14", border: `1px solid ${C.red}44` }}>⚠ {err}</div>}
 
         {/* Nhập sổ quỹ từ ERP (MISA) → bảng transactions, nguồn lịch sử cho dự báo */}
-        <LedgerImportSection companyId={companyId} onImported={onChanged} C={C} inp={inp} />
+        <LedgerImportSection companyId={companyId} onImported={onChanged} C={C} inp={inp} currency={currency} books={books} />
 
         {/* Số dư đầu kỳ */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
           <Wallet size={15} color={C.gold} />
-          <span style={{ fontSize: 13, fontWeight: 700 }}>{t("cf.data.opening")}</span>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>{t("cf.data.opening", { accts: cashAccts })}</span>
           <input className="tnum" type="number" min="0" step="1000000" value={opening} onChange={(e) => setOpening(e.target.value)} style={{ ...inp, width: 180, textAlign: "right" }} />
-          <span style={{ fontSize: 11, color: C.sub }}>₫</span>
+          <span style={{ fontSize: 11, color: C.sub }}>{moneySymbol(currency)}</span>
           <button onClick={saveOpening} disabled={savingOpen} style={{ padding: "8px 16px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: "#06251a", background: C.green, opacity: savingOpen ? 0.6 : 1, fontFamily: "inherit" }}>{savingOpen ? "…" : t("cf.data.save")}</button>
           {openSaved && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: C.green }}><Check size={13} />{t("cf.data.saved")}</span>}
         </div>

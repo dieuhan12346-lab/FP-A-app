@@ -364,7 +364,7 @@ function CashflowDashboard() {
           </div>
         </header>
 
-        {showData && <CashflowDataModal companyId={company?.id} data={cfData} onChanged={reloadCf} onClose={() => setShowData(false)} />}
+        {showData && <CashflowDataModal company={company} companyId={company?.id} data={cfData} onChanged={reloadCf} onClose={() => setShowData(false)} />}
 
         {/* bản chính: lối vào nhập/cập nhật dữ liệu — nút "Nhập dữ liệu" duy nhất của module */}
         {!DEMO_MODE && (
@@ -403,7 +403,7 @@ function CashflowDashboard() {
         </div>
 
         <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", marginBottom: 16 }}>
-          <Kpi label={t("cf.kpi.cash")} sub={t("cf.kpi.cash.sub")} value={fmtVnd(ds.startCash)} accent={C.gold} icon={<Wallet size={16} />} />
+          <Kpi label={t("cf.kpi.cash")} sub={t("cf.kpi.cash.sub", { accts: chartFor(standard) === "VAS" ? "111+112" : "1000+1100" })} value={fmtVnd(ds.startCash)} accent={C.gold} icon={<Wallet size={16} />} />
           <Kpi label={t("cf.kpi.pneg")} sub={t("cf.kpi.pneg.sub", { sc: t("sc." + (sc.key || "base")) })} value={`${Math.round(sim.pNeg * 100)}%`} accent={rk.c} icon={<rk.Icon size={16} />} />
           <Kpi label={t("cf.kpi.trough")} sub={t("cf.kpi.trough.sub")} value={fmtVnd(sim.expMin)} accent={sim.expMin < 0 ? C.red : C.green} icon={<TrendingDown size={16} />} />
           <Kpi label={t("cf.kpi.worst")} sub={t("cf.kpi.worst.sub")} value={fmtVnd(sim.worstMin)} accent={sim.worstMin < 0 ? C.red : C.cyan} icon={<AlertTriangle size={16} />} />
@@ -947,7 +947,7 @@ function FpaAutomation() {
         {/* DỮ LIỆU THẬT — thanh nhập liệu (dùng chung với Cash Flow); ẩn ở bản DEMO */}
         {!DEMO_MODE && (
           <>
-            {showData && <CashflowDataModal companyId={company?.id} data={cfData} onChanged={reloadFpa} onClose={() => setShowData(false)} />}
+            {showData && <CashflowDataModal company={company} companyId={company?.id} data={cfData} onChanged={reloadFpa} onClose={() => setShowData(false)} />}
             <div className="card" style={{ background: C_FPA.panel, border: dataset.empty ? `1.5px dashed ${C_FPA.orange}55` : `1px solid ${C_FPA.line}`, borderRadius: 14, padding: "13px 15px", marginBottom: 16, display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap" }}>
               <div style={{ width: 38, height: 38, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: dataset.empty ? C_FPA.orangeSoft : C_FPA.goldSoft }}><Database size={18} color={dataset.empty ? C_FPA.orange : C_FPA.gold} /></div>
               <div style={{ flex: 1, minWidth: 180 }}>

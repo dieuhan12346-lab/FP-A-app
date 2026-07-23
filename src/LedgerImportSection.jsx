@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { FileSpreadsheet, UploadCloud, Check, AlertTriangle, Trash2, SlidersHorizontal } from "lucide-react";
 import { parseLedger, extractTransactions } from "./lib/ledgerImport";
 import { saveLedgerImport, listLedgerImports, deleteLedgerImport } from "./lib/transactions";
+import { fmtMoney } from "./lib/money";
 
 /* Nhập sổ quỹ / sổ cái tiền từ file xuất ERP (MISA S07-DN…) → bảng transactions.
    Nhúng trong modal Dữ liệu dòng tiền. C, inp: style truyền từ modal cho đồng bộ. */
@@ -15,7 +16,7 @@ const FIELDS = [
   { k: "bal", labelKey: "led.f.bal" },
 ];
 
-export default function LedgerImportSection({ companyId, onImported, C, inp, initialAoa = null, initialName = "" }) {
+export default function LedgerImportSection({ companyId, onImported, C, inp, currency = "VND", books = "VND", initialAoa = null, initialName = "" }) {
   const { t } = useTranslation();
   const fileRef = useRef();
   const [imports, setImports] = useState([]);
@@ -98,7 +99,7 @@ export default function LedgerImportSection({ companyId, onImported, C, inp, ini
     };
   })() : null;
 
-  const money = (v) => (Number(v) || 0).toLocaleString("vi-VN") + " ₫";
+  const money = (v) => fmtMoney(v, currency, books);
   const btn = (bg, col) => ({ padding: "8px 15px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: col, background: bg, fontFamily: "inherit" });
 
   return (
@@ -106,7 +107,7 @@ export default function LedgerImportSection({ companyId, onImported, C, inp, ini
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
         <FileSpreadsheet size={15} color={C.cyan} />
         <span style={{ fontSize: 13.5, fontWeight: 800 }}>{t("led.title")}</span>
-        <span style={{ fontSize: 10, fontWeight: 800, color: C.cyan, background: C.cyan + "1c", padding: "2px 7px", borderRadius: 5 }}>MISA · S07-DN</span>
+        <span style={{ fontSize: 10, fontWeight: 800, color: C.cyan, background: C.cyan + "1c", padding: "2px 7px", borderRadius: 5 }}>MISA · QuickBooks · SAP</span>
       </div>
       <div style={{ fontSize: 11.5, color: C.sub, marginBottom: 11, lineHeight: 1.5 }}>{t("led.desc")}</div>
 
