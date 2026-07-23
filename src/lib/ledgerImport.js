@@ -58,15 +58,18 @@ export function parseDateCell(v) {
 
 /* alias tiêu đề cột (chuẩn hoá) → field. Bao cả sổ quỹ (Thu/Chi) và sổ cái TK (Nợ/Có). */
 export const LEDGER_ALIAS = {
-  postDate: ["ngày, tháng ghi sổ", "ngày tháng ghi sổ", "ngày ghi sổ", "ngày gs", "ngày hạch toán", "posting date", "ngày"],
+  postDate: ["ngày, tháng ghi sổ", "ngày tháng ghi sổ", "ngày ghi sổ", "ngày gs", "ngày hạch toán", "posting date", "ngày", "date", "trans date", "txn date"],
   docDate:  ["ngày, tháng chứng từ", "ngày tháng chứng từ", "ngày chứng từ", "ngày ct", "ngày ct gốc", "document date", "voucher date"],
-  voucherNo:["số hiệu chứng từ", "số hiệu ct", "số chứng từ", "số ct", "số phiếu", "số ct thu", "số ct chi", "voucher no", "số hiệu"],
-  desc:     ["diễn giải", "nội dung", "nội dung kinh tế", "description", "memo", "details"],
-  amountGroup: ["số tiền", "amount"],
-  in:  ["thu", "phát sinh nợ", " psnợ", "ghi nợ", "nợ", "phát sinh thu", "tiền thu", "thu vào", "debit", "receipt", "phát sinh nợ (thu)"],
-  out: ["chi", "phát sinh có", "psng có", "phát sinh có ", "ghi có", "có", "phát sinh chi", "tiền chi", "chi ra", "credit", "payment", "phát sinh có (chi)"],
-  bal: ["tồn", "số dư", "số dư cuối", "số dư cuối kỳ", "luỹ kế", "lũy kế", "balance", "số tồn"],
+  voucherNo:["số hiệu chứng từ", "số hiệu ct", "số chứng từ", "số ct", "số phiếu", "số ct thu", "số ct chi", "voucher no", "số hiệu", "journal reference", "reference", "ref", "ref no", "doc no", "document number", "document no", "belegnummer", "beleg", "journal entry", "assignment", "je no"],
+  desc:     ["diễn giải", "nội dung", "nội dung kinh tế", "description", "memo", "details", "narration", "text", "item text", "buchungstext", "sgtxt"],
+  amountGroup: ["số tiền", "amount", "transaction"],
+  in:  ["thu", "phát sinh nợ", " psnợ", "ghi nợ", "nợ", "phát sinh thu", "tiền thu", "thu vào", "debit", "receipt", "phát sinh nợ (thu)", "soll", "sollbetrag", "debit amount", "money in", "paid in"],
+  out: ["chi", "phát sinh có", "psng có", "phát sinh có ", "ghi có", "có", "phát sinh chi", "tiền chi", "chi ra", "credit", "payment", "phát sinh có (chi)", "haben", "habenbetrag", "credit amount", "money out", "paid out", "withdrawal"],
+  bal: ["tồn", "số dư", "số dư cuối", "số dư cuối kỳ", "luỹ kế", "lũy kế", "balance", "số tồn", "cumulative balance", "running balance", "saldo"],
   note: ["ghi chú", "note", "remark", "ghi chú "],
+  // SAP FBL3N / sao kê: một cột số tiền có dấu + cột chỉ báo Nợ/Có (S/H, D/C)
+  amount: ["amount", "amount in local currency", "amount in doc. curr.", "amount in doc currency", "betrag", "amount (lc)", "lc amount", "amount in lc"],
+  dc: ["d/c", "debit/credit", "debit/credit ind", "s/h", "soll/haben", "dr/cr", "d/c ind"],
 };
 
 const OPENING_RE = /(số dư|tồn|dư)\s*(đầu)/i;                 // "Số dư đầu kỳ", "Tồn đầu kỳ"
@@ -84,13 +87,13 @@ function isCodeRow(cells) {
 
 /* Tìm dòng tiêu đề: dòng đầu tiên (quét ≤30) khớp ≥2 field neo. */
 function findHeaderRow(aoa) {
-  const anchors = ["postDate", "docDate", "desc", "voucherNo", "amountGroup", "in", "out"];
+  const anchors = ["postDate", "docDate", "desc", "voucherNo", "amountGroup", "in", "out", "amount"];
   for (let i = 0; i < Math.min(aoa.length, 30); i++) {
     const cells = (aoa[i] || []).map(norm);
     let hit = 0;
     for (const f of anchors) if (cells.some((c) => matchField(c, f))) hit++;
     if (hit >= 2 && cells.some((c) => matchField(c, "postDate") || matchField(c, "docDate")) &&
-        cells.some((c) => matchField(c, "desc") || matchField(c, "amountGroup") || matchField(c, "in"))) return i;
+        cells.some((c) => matchField(c, "desc") || matchField(c, "amountGroup") || matchField(c, "in") || matchField(c, "out") || matchField(c, "amount"))) return i;
   }
   return -1;
 }
@@ -99,7 +102,7 @@ function findHeaderRow(aoa) {
 export function buildLedgerColIndex(aoa, hRow) {
   const head = (aoa[hRow] || []).map(norm);
   const idx = {};
-  for (const f of ["postDate", "docDate", "voucherNo", "desc", "amountGroup", "in", "out", "bal", "note"]) {
+  for (const f of ["postDate", "docDate", "voucherNo", "desc", "amountGroup", "in", "out", "bal", "note", "amount", "dc"]) {
     for (let j = 0; j < head.length; j++) if (matchField(head[j], f)) { idx[f] = j; break; }
   }
   let usedSub = false;
@@ -123,7 +126,7 @@ export function parseLedger(aoa) {
   const { idx, usedSub } = buildLedgerColIndex(aoa, hRow);
   const columns = (aoa[hRow] || []).map((c, j) => ({ j, label: String(c).replace(/[\r\n]+/g, " ").trim() }));
 
-  if ((idx.in == null && idx.out == null) || idx.postDate == null && idx.docDate == null) {
+  if ((idx.in == null && idx.out == null && idx.amount == null) || idx.postDate == null && idx.docDate == null) {
     return { ok: false, reason: "unmapped", headerRow: hRow, colIndex: idx, transactions: [], columns, usedSub };
   }
 
@@ -146,8 +149,17 @@ export function extractTransactions(aoa, start, idx) {
     const cell = (j) => (j == null ? "" : row[j]);
     const descRaw = String(cell(idx.desc)).replace(/[\r\n]+/g, " ").trim();
     if (FOOTER_RE.test(descRaw)) break;                       // tới chân sổ → dừng
-    const amtIn = idx.in != null ? toNum(cell(idx.in)) : 0;
-    const amtOut = idx.out != null ? toNum(cell(idx.out)) : 0;
+    let amtIn = 0, amtOut = 0;
+    if (idx.in != null || idx.out != null) {
+      amtIn = idx.in != null ? toNum(cell(idx.in)) : 0;
+      amtOut = idx.out != null ? toNum(cell(idx.out)) : 0;
+    } else if (idx.amount != null) {
+      // SAP FBL3N / sao kê: 1 cột số tiền có dấu (+ chỉ báo Nợ/Có). Soll/S/Debit/D → tiền vào.
+      const raw = toNum(cell(idx.amount));
+      const ind = idx.dc != null ? norm(cell(idx.dc)) : "";
+      const debit = ind ? /^(s|d)/.test(ind) : raw >= 0;
+      if (debit) amtIn = Math.abs(raw); else amtOut = Math.abs(raw);
+    }
     const bal = idx.bal != null ? toNum(cell(idx.bal)) : null;
 
     if (OPENING_RE.test(descRaw)) { if (openingBalance == null) openingBalance = bal != null ? bal : amtIn; continue; }
