@@ -4,6 +4,8 @@
   "sidebar.collapse": "Thu gọn",
   "user.role": "Kế toán trưởng · đang trực tuyến",
   "nav.cashflow": "Dòng tiền",
+  "nav.dataentry": "Nhập dữ liệu",
+  "nav.dataentry.desc": "Số dư · công nợ · nhập từ ERP",
   "nav.cashflow.desc": "Dự báo · Stress-test · Thu hồi",
   "nav.fpa": "FP&A Automation",
   "nav.fpa.desc": "Dự báo ML · Kịch bản · Cảnh báo",

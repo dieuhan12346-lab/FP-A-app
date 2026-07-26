@@ -269,7 +269,7 @@ function riskLevel(p, pal) {
 const RK_LABEL = { safe: "cf.lvl.safe2", watch: "cf.lvl.watch", warn: "cf.lvl.warn2", crit: "cf.lvl.crit" };
 const heat = (s, pal) => (s < 0.05 ? pal.green : s < 0.25 ? pal.gold : s < 0.5 ? pal.orange : pal.red);
 
-function CashflowDashboard() {
+function CashflowDashboard({ go }) {
   const { t, i18n: i18nInst } = useT();
   const lang = i18nInst.language;
   const { company } = useCompany();
@@ -374,7 +374,7 @@ function CashflowDashboard() {
               <div style={{ fontWeight: 800, fontSize: 14 }}>{t(ds.empty ? "cf.empty.title" : "cf.data.bar.title")}</div>
               <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, lineHeight: 1.55 }}>{t(ds.empty ? "cf.empty.desc" : "cf.data.bar.desc")}</div>
             </div>
-            <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#1a1206", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Database size={15} />{t("cf.data.button")}</button>
+            <button className="btn" onClick={() => go?.("dataentry")} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#1a1206", background: `linear-gradient(135deg, ${C.gold}, #C9892A)` }}><Database size={15} />{t("cf.data.button")}</button>
           </div>
         )}
 
@@ -835,7 +835,7 @@ function mlToForecast(ml, startCash) {
   };
 }
 
-function FpaAutomation() {
+function FpaAutomation({ go }) {
   const { t } = useT();
   const { company } = useCompany();
   const currency = company?.currency || "VND";
@@ -954,7 +954,7 @@ function FpaAutomation() {
                 <div style={{ fontWeight: 800, fontSize: 13.5 }}>{t(dataset.empty ? "cf.empty.title" : "cf.data.bar.title")}</div>
                 <div style={{ fontSize: 12, color: C_FPA.sub, marginTop: 3, lineHeight: 1.5 }}>{t(dataset.empty ? "cf.empty.desc" : "cf.data.bar.desc")}</div>
               </div>
-              <button className="btn" onClick={() => setShowData(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px", borderRadius: 10, fontWeight: 800, fontSize: 12.5, color: "#1a1206", background: `linear-gradient(135deg, ${C_FPA.gold}, #C9892A)` }}><Database size={14} />{t("cf.data.button")}</button>
+              <button className="btn" onClick={() => go?.("dataentry")} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px", borderRadius: 10, fontWeight: 800, fontSize: 12.5, color: "#1a1206", background: `linear-gradient(135deg, ${C_FPA.gold}, #C9892A)` }}><Database size={14} />{t("cf.data.button")}</button>
             </div>
           </>
         )}
@@ -3022,6 +3022,16 @@ function CashTipInv({ active, payload }) {
 /* ================= APP SHELL (sidebar navigation) ================= */
 function useT() { return useTranslation(); }
 
+/* Trang nhập dữ liệu dòng tiền (thay modal thả nổi) — tự tải dữ liệu, render form full-page. */
+function CashflowDataPage({ go }) {
+  const { company } = useCompany();
+  const [cf, setCf] = useState(null);
+  const reload = () => { if (company?.id) fetchCashflowData(company.id).then(setCf).catch(() => setCf(null)); };
+  // eslint-disable-next-line
+  useEffect(() => { setCf(null); reload(); }, [company?.id]);
+  return <CashflowDataModal asPage company={company} companyId={company?.id} data={cf} onChanged={reload} onClose={() => go?.("cashflow")} />;
+}
+
 const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
   { id: "fpa", key: "fpa", icon: Brain, c: C.cyan },
@@ -3061,7 +3071,7 @@ function AppShell() {
     document.head.appendChild(l); return () => { document.head.removeChild(l); };
   }, []);
 
-  const active = NAV.find((n) => n.id === page);
+  const active = NAV.find((n) => n.id === page) || { key: "dataentry", icon: Database, c: C.gold };
   const SW = collapsed ? 68 : 246;
 
   return (
@@ -3154,9 +3164,10 @@ function AppShell() {
 
         {/* page body */}
         <div style={{ padding: "20px clamp(16px,3vw,30px)", flex: 1 }}>
-          {page === "cashflow" ? <CashflowDashboard />
+          {page === "cashflow" ? <CashflowDashboard go={setPage} />
+            : page === "dataentry" ? <CashflowDataPage go={setPage} />
             : page === "ops" ? <OpsCashflow />
-            : page === "fpa" ? <FpaAutomation />
+            : page === "fpa" ? <FpaAutomation go={setPage} />
             : page === "collect" ? <DebtCollect />
             : page === "credit" ? <CreditScore />
             : page === "invoice" ? <InvoiceProcess_INV />

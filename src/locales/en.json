@@ -4,6 +4,8 @@
   "sidebar.collapse": "Collapse",
   "user.role": "Chief Accountant · online",
   "nav.cashflow": "Cash Flow",
+  "nav.dataentry": "Data entry",
+  "nav.dataentry.desc": "Opening cash · debts · ERP import",
   "nav.cashflow.desc": "Forecast · Stress-test · Collection",
   "nav.fpa": "FP&A Automation",
   "nav.fpa.desc": "ML forecast · Scenarios · Alerts",

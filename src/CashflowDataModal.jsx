@@ -11,7 +11,7 @@ const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,2
 
 const inp = { padding: "8px 11px", borderRadius: 9, fontSize: 12.5, color: C.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C.line}`, outline: "none", fontFamily: "inherit" };
 
-export default function CashflowDataModal({ company, companyId, data, onChanged, onClose }) {
+export default function CashflowDataModal({ company, companyId, data, onChanged, onClose, asPage = false }) {
   const { t } = useTranslation();
   const currency = company?.currency || "VND";
   const books = booksCurrencyFor(company?.country);
@@ -81,9 +81,8 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
     );
   };
 
-  return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(4,8,16,.72)", backdropFilter: "blur(3px)", display: "grid", placeItems: "center", padding: 20 }} onClick={onClose}>
-      <div style={{ width: "100%", maxWidth: 660, maxHeight: "92vh", overflowY: "auto", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, padding: "24px 24px 20px", color: C.txt, fontFamily: "system-ui" }} onClick={(e) => e.stopPropagation()}>
+  const box = (
+      <div style={{ width: "100%", maxWidth: asPage ? 920 : 660, maxHeight: asPage ? "none" : "92vh", overflowY: "auto", margin: asPage ? "0 auto" : undefined, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, padding: "24px 24px 20px", color: C.txt, fontFamily: "system-ui" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
           <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em" }}>{t("cf.data.title")}</div>
           <button onClick={onClose} style={{ border: "none", background: "transparent", color: C.sub, cursor: "pointer", padding: 4 }}><X size={18} /></button>
@@ -144,6 +143,11 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
 
         <div style={{ marginTop: 16, fontSize: 11, color: C.sub, lineHeight: 1.55 }}>{t("cf.data.note")}</div>
       </div>
+  );
+  if (asPage) return box;
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(4,8,16,.72)", backdropFilter: "blur(3px)", display: "grid", placeItems: "center", padding: 20 }} onClick={onClose}>
+      {box}
     </div>,
     document.body
   );
