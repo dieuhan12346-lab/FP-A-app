@@ -287,6 +287,7 @@
   "led.f.desc": "Cột diễn giải",
   "led.f.bal": "Cột số dư (tuỳ chọn)",
   "led.save": "Lưu {n} giao dịch",
+  "led.saving": "Đang lưu {done}/{n}…",
   "led.cancel": "Huỷ",
   "led.saved": "Đã lưu {n} giao dịch",
   "led.err.noHeader": "Không nhận ra dòng tiêu đề sổ quỹ. Gán cột thủ công bên dưới.",

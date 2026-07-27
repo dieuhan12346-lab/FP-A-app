@@ -287,6 +287,7 @@
   "led.f.desc": "Description column",
   "led.f.bal": "Balance column (optional)",
   "led.save": "Save {n} transactions",
+  "led.saving": "Saving {done}/{n}…",
   "led.cancel": "Cancel",
   "led.saved": "Saved {n} transactions",
   "led.err.noHeader": "Cash book header not recognized. Map columns manually below.",

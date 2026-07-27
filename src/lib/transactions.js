@@ -21,8 +21,11 @@ const mapTxn = (r) => ({
   sourceFile: r.source_file || "",
 });
 
-/** Lưu một lô giao dịch đã parse từ file sổ quỹ. Trả về { importId, count }. */
-export async function saveLedgerImport(companyId, { sourceFile = "", account = "" } = {}, txns = []) {
+const INSERT_CHUNK = 500; // chia lô để hàng nghìn dòng không vỡ giới hạn payload/timeout của PostgREST
+
+/** Lưu một lô giao dịch đã parse từ file sổ quỹ (chia batch, chịu được hàng nghìn dòng).
+ *  onProgress(done, total) gọi sau mỗi batch để UI hiển thị tiến độ. Trả về { importId, count }. */
+export async function saveLedgerImport(companyId, { sourceFile = "", account = "" } = {}, txns = [], onProgress) {
   if (!companyId) throw new Error("Chưa xác định được hồ sơ công ty — tải lại trang rồi thử lại.");
   if (!txns.length) return { importId: null, count: 0 };
   const importId = (globalThis.crypto?.randomUUID?.() || `imp_${Date.now()}_${Math.random().toString(36).slice(2)}`);
@@ -40,8 +43,17 @@ export async function saveLedgerImport(companyId, { sourceFile = "", account = "
     source_file: sourceFile || null,
     import_id: importId,
   }));
-  const { error } = await db().from("transactions").insert(rows);
-  if (error) throw error;
+  const client = db();
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const batch = rows.slice(i, i + INSERT_CHUNK);
+    const { error } = await client.from("transactions").insert(batch);
+    if (error) {
+      // Lỗi giữa chừng: dọn lô đang nhập để không để lại dữ liệu nửa vời, rồi báo rõ.
+      if (i > 0) { try { await client.from("transactions").delete().eq("import_id", importId); } catch { /* bỏ qua */ } }
+      throw new Error(`Lưu lỗi ở dòng ${i + 1}/${rows.length}: ${error.message}`);
+    }
+    onProgress?.(Math.min(i + INSERT_CHUNK, rows.length), rows.length);
+  }
   return { importId, count: rows.length };
 }
 

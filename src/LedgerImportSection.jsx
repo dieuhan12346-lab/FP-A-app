@@ -23,6 +23,7 @@ export default function LedgerImportSection({ companyId, onImported, C, inp, cur
   const [st, setSt] = useState(null); // { fileName, aoa, start, columns, colIndex, txns, opening }
   const [showMap, setShowMap] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(null); // { done, total } khi đang lưu nhiều dòng
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
@@ -80,11 +81,11 @@ export default function LedgerImportSection({ companyId, onImported, C, inp, cur
 
   const save = () => {
     if (!st?.txns?.length) { setErr(t("led.err.noTxns")); return; }
-    setBusy(true); setErr("");
-    saveLedgerImport(companyId, { sourceFile: st.fileName, account: "111" }, st.txns)
+    setBusy(true); setErr(""); setProg({ done: 0, total: st.txns.length });
+    saveLedgerImport(companyId, { sourceFile: st.fileName, account: "111" }, st.txns, (done, total) => setProg({ done, total }))
       .then(({ count }) => { setOk(t("led.saved", { n: count })); setSt(null); setShowMap(false); reload(); onImported?.(); setTimeout(() => setOk(""), 3500); })
       .catch((ex) => setErr(ex.message))
-      .finally(() => setBusy(false));
+      .finally(() => { setBusy(false); setProg(null); });
   };
 
   const del = (id) => { setErr(""); deleteLedgerImport(id).then(() => { reload(); onImported?.(); }).catch((ex) => setErr(ex.message)); };
@@ -157,7 +158,7 @@ export default function LedgerImportSection({ companyId, onImported, C, inp, cur
           )}
 
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button onClick={save} disabled={busy || !st.txns.length} style={{ ...btn(C.green, "#06251a"), opacity: busy || !st.txns.length ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={13} />{busy ? "…" : t("led.save", { n: st.txns.length })}</button>
+            <button onClick={save} disabled={busy || !st.txns.length} style={{ ...btn(C.green, "#06251a"), opacity: busy || !st.txns.length ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={13} />{busy ? (prog ? t("led.saving", { done: prog.done, n: prog.total }) : "…") : t("led.save", { n: st.txns.length })}</button>
             <button onClick={() => { setSt(null); setShowMap(false); setErr(""); }} style={{ ...btn("transparent", C.sub), border: `1px solid ${C.line}` }}>{t("led.cancel")}</button>
           </div>
         </div>
