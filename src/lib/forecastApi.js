@@ -28,3 +28,27 @@ export async function fetchForecast(companyId, openingBalanceMillions, horizon =
   }
   return res.json();
 }
+
+/** Gửi 1 email nhắc nợ thật qua service (Resend). payload: { company_id, to, subject, body, ... }.
+ *  Trả { ok, id } khi thành công; ném Error (kèm thông báo service) khi hỏng. */
+export async function sendReminder(payload) {
+  if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error("Chưa đăng nhập");
+  let res;
+  try {
+    res = await fetch(`${FORECAST_URL}/send-reminder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    throw new Error("Không kết nối được dịch vụ gửi email");
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Gửi email lỗi ${res.status}${t ? ": " + t.slice(0, 160) : ""}`);
+  }
+  return res.json();
+}

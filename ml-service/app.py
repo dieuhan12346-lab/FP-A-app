@@ -24,6 +24,12 @@ from forecast import forecast_cashflow
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")   # Legacy JWT Secret (nếu token HS256)
 SUPABASE_URL = os.getenv("SUPABASE_URL")                  # dùng cho JWKS + đọc transactions
 
+# Gửi email nhắc nợ qua Resend. Chưa cấu hình RESEND_API_KEY → endpoint /send-reminder trả 501.
+# REMINDER_FROM mặc định dùng domain sandbox của Resend (chỉ gửi tới email chủ tài khoản);
+# đặt "Luxora <no-reply@luxorasystem.com>" sau khi verify domain để gửi tới khách thật.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+REMINDER_FROM = os.getenv("REMINDER_FROM", "Luxora <onboarding@resend.dev>")
+
 
 @lru_cache(maxsize=1)
 def _jwks_client():
@@ -50,6 +56,28 @@ class ForecastReq(BaseModel):
     company_id: str | None = None
     horizon: int = 13
     opening_balance: float = 0.0
+
+
+class SendReminderReq(BaseModel):
+    company_id: str
+    to: str                       # email người nhận
+    subject: str
+    body: str                     # nội dung thuần văn bản (đã soạn ở app)
+    receivable_id: str | None = None
+    customer: str | None = None
+    invoice_codes: str | None = None
+    tier: str | None = None       # gentle | firm | urgent
+    footer: str | None = None     # dòng chân thư (đã bản địa hoá ở app); có mặc định nếu trống
+
+
+class EmailDomainReq(BaseModel):
+    company_id: str
+    domain: str
+    from_name: str | None = None
+
+
+class CompanyRef(BaseModel):
+    company_id: str
 
 
 def _monday(iso: str) -> str:
@@ -167,3 +195,190 @@ def forecast(req: ForecastReq, user_id: str = Depends(require_user)):
     if not weekly:
         raise HTTPException(404, "Không có dữ liệu giao dịch để dự báo")
     return forecast_cashflow(weekly, horizon=max(1, min(req.horizon, 26)), opening_balance=req.opening_balance)
+
+
+# ---------- Gửi email nhắc nợ (Resend) ----------
+
+def _html_escape(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _reminder_html(body: str, footer: str | None) -> str:
+    """Bọc nội dung thuần văn bản thành HTML đơn giản (giữ xuống dòng) + chân thư."""
+    safe = _html_escape(body).replace("\n", "<br>")
+    foot = _html_escape(footer or "Email tự động từ hệ thống quản lý công nợ. Nếu đã thanh toán, vui lòng bỏ qua thư này.")
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2e;line-height:1.6;max-width:640px">'
+        f'<div>{safe}</div>'
+        f'<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">'
+        f'<div style="font-size:12px;color:#8a93aa">{foot}</div>'
+        '</div>'
+    )
+
+
+def _resend_api(method: str, path: str, payload: dict | None = None) -> dict:
+    if not RESEND_API_KEY:
+        raise HTTPException(501, "Service chưa cấu hình RESEND_API_KEY")
+    import httpx
+    try:
+        r = httpx.request(method, f"https://api.resend.com{path}",
+                          headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                          json=payload, timeout=30)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Không gọi được Resend: {e}")
+    if r.status_code not in (200, 201):
+        raise HTTPException(502, f"Resend lỗi {r.status_code}: {r.text[:200]}")
+    return r.json() if r.text else {}
+
+
+def _company_email_config(company_id: str) -> dict:
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return {}
+    import httpx
+    try:
+        r = httpx.get(f"{url}/rest/v1/companies",
+                      params={"id": f"eq.{company_id}", "select": "name,email_domain,email_domain_id,email_domain_status,email_from_name"},
+                      headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=20)
+        rows = r.json() if r.status_code == 200 else []
+        return rows[0] if rows else {}
+    except Exception:
+        return {}
+
+
+def _patch_company(company_id: str, fields: dict) -> None:
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return
+    import httpx
+    try:
+        httpx.patch(f"{url}/rest/v1/companies", params={"id": f"eq.{company_id}"}, json=fields,
+                    headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json", "Prefer": "return=minimal"},
+                    timeout=20)
+    except Exception:
+        pass
+
+
+def _from_for(company_id: str) -> str:
+    """Địa chỉ gửi theo TỪNG công ty (option B): domain đã verify → no-reply@domain; chưa có → REMINDER_FROM."""
+    c = _company_email_config(company_id)
+    if c.get("email_domain") and c.get("email_domain_status") == "verified":
+        name = c.get("email_from_name") or c.get("name") or "Luxora"
+        return f"{name} <no-reply@{c['email_domain']}>"
+    return REMINDER_FROM
+
+
+def _log_reminder(req: "SendReminderReq", user_id: str, status: str, provider_id: str | None, error: str | None) -> None:
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return  # không cấu hình DB → bỏ qua ghi log, không chặn việc gửi
+    import httpx
+    try:
+        httpx.post(
+            f"{url}/rest/v1/reminder_log",
+            json={
+                "company_id": req.company_id, "receivable_id": req.receivable_id, "customer": req.customer,
+                "invoice_codes": req.invoice_codes, "to_email": req.to, "channel": "email",
+                "tier": req.tier, "subject": req.subject, "status": status,
+                "provider_id": provider_id, "error": error, "sent_by": user_id,
+            },
+            headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json", "Prefer": "return=minimal"},
+            timeout=15,
+        )
+    except Exception:
+        pass  # ghi log lỗi không được làm hỏng kết quả gửi
+
+
+@app.post("/send-reminder")
+def send_reminder(req: SendReminderReq, user_id: str = Depends(require_user)):
+    if not _is_member(req.company_id, user_id):
+        raise HTTPException(403, "Bạn không thuộc công ty này")
+    if not RESEND_API_KEY:
+        raise HTTPException(501, "Service chưa cấu hình RESEND_API_KEY — thêm biến môi trường trên Railway")
+    to = (req.to or "").strip()
+    if "@" not in to or " " in to:
+        raise HTTPException(400, "Email người nhận không hợp lệ")
+    import httpx
+    try:
+        r = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "from": _from_for(req.company_id), "to": [to],
+                "subject": req.subject or "Nhắc thanh toán công nợ",
+                "text": req.body, "html": _reminder_html(req.body, req.footer),
+            },
+            timeout=30,
+        )
+    except httpx.HTTPError as e:
+        _log_reminder(req, user_id, "failed", None, f"network: {e}")
+        raise HTTPException(502, f"Không gọi được Resend: {e}")
+    ok = r.status_code in (200, 201)
+    provider_id = (r.json() or {}).get("id") if ok else None
+    _log_reminder(req, user_id, "sent" if ok else "failed", provider_id, None if ok else r.text[:300])
+    if not ok:
+        raise HTTPException(502, f"Resend lỗi {r.status_code}: {r.text[:200]}")
+    return {"ok": True, "id": provider_id}
+
+
+# ---------- Domain gửi email theo từng công ty (option B) ----------
+
+def _norm_status(s: str | None) -> str:
+    return "verified" if s == "verified" else ("failed" if s in ("failed", "temporary_failure") else "pending")
+
+
+@app.post("/email-domain")
+def email_domain_setup(req: EmailDomainReq, user_id: str = Depends(require_user)):
+    """Đăng ký (hoặc lấy lại) domain gửi của công ty trên Resend → trả bản ghi DNS cần thêm."""
+    if not _is_member(req.company_id, user_id):
+        raise HTTPException(403, "Bạn không thuộc công ty này")
+    domain = (req.domain or "").strip().lower().lstrip("@")
+    if "." not in domain or " " in domain:
+        raise HTTPException(400, "Tên miền không hợp lệ")
+    c = _company_email_config(req.company_id)
+    if c.get("email_domain_id") and c.get("email_domain") == domain:
+        dom = _resend_api("GET", f"/domains/{c['email_domain_id']}")      # đã đăng ký → lấy lại records
+    else:
+        dom = _resend_api("POST", "/domains", {"name": domain})           # đăng ký mới
+    _patch_company(req.company_id, {
+        "email_domain": domain, "email_domain_id": dom.get("id"),
+        "email_domain_status": _norm_status(dom.get("status")),
+        "email_from_name": req.from_name or c.get("name"),
+    })
+    return {"domain": domain, "status": dom.get("status"), "records": dom.get("records", []), "from": f"no-reply@{domain}"}
+
+
+@app.post("/email-domain/verify")
+def email_domain_verify(req: CompanyRef, user_id: str = Depends(require_user)):
+    """Kích hoạt kiểm tra DNS + đọc lại trạng thái verify từ Resend."""
+    if not _is_member(req.company_id, user_id):
+        raise HTTPException(403, "Bạn không thuộc công ty này")
+    c = _company_email_config(req.company_id)
+    did = c.get("email_domain_id")
+    if not did:
+        raise HTTPException(400, "Công ty chưa đăng ký domain gửi")
+    try:
+        _resend_api("POST", f"/domains/{did}/verify")   # có thể lỗi khi còn pending — vẫn đọc trạng thái bên dưới
+    except HTTPException:
+        pass
+    dom = _resend_api("GET", f"/domains/{did}")
+    _patch_company(req.company_id, {"email_domain_status": _norm_status(dom.get("status"))})
+    return {"domain": c.get("email_domain"), "status": dom.get("status"), "records": dom.get("records", [])}
+
+
+@app.get("/email-domain")
+def email_domain_get(company_id: str, user_id: str = Depends(require_user)):
+    """Trạng thái domain gửi hiện tại của công ty (kèm bản ghi DNS nếu đã đăng ký)."""
+    if not _is_member(company_id, user_id):
+        raise HTTPException(403, "Bạn không thuộc công ty này")
+    c = _company_email_config(company_id)
+    out = {"domain": c.get("email_domain"), "status": c.get("email_domain_status") or "none",
+           "from_name": c.get("email_from_name") or c.get("name"), "records": []}
+    if c.get("email_domain_id"):
+        try:
+            dom = _resend_api("GET", f"/domains/{c['email_domain_id']}")
+            out["status"] = dom.get("status") or out["status"]
+            out["records"] = dom.get("records", [])
+        except HTTPException:
+            pass
+    return out

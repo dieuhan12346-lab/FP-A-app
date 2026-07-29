@@ -12,7 +12,7 @@ import { loadAccounts, accountName } from "./lib/accounts";
 import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines, setReceivableStatus } from "./lib/cashflow";
 import { fetchTransactions } from "./lib/transactions";
-import { fetchForecast } from "./lib/forecastApi";
+import { fetchForecast, sendReminder } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
 import { useCompany } from "./CompanyContext";
@@ -1893,6 +1893,31 @@ function DebtCollect() {
   const markSent = () => cur && setSent((s) => new Set(s).add(cur.id + ":" + channel));
   const isSent = cur ? sent.has(cur.id + ":" + channel) : false;
 
+  // Gửi email THẬT (chỉ kênh email + bản chính + có email khách). Demo/kênh khác → chỉ đánh dấu đã gửi.
+  const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState("");
+  const canRealEmail = !DEMO_MODE && channel === "email" && !!cur?.email && !!company?.id;
+  const doSend = async () => {
+    setSendErr("");
+    if (!canRealEmail) { markSent(); return; }               // demo hoặc kênh chat/sms → đánh dấu thủ công
+    if (!window.confirm(t("col.send.confirm", { to: cur.email }))) return;
+    setSending(true);
+    try {
+      await sendReminder({
+        company_id: company.id, to: cur.email,
+        subject: msg?.subject || "", body: msg?.body || "",
+        receivable_id: String(cur.id), customer: cur.name,
+        invoice_codes: (cur.invoices || []).map((iv) => iv.code).join(", "),
+        tier: cur.tier?.key, footer: t("col.send.footer"),
+      });
+      markSent();
+    } catch (e) {
+      setSendErr(e?.message || "Gửi lỗi");
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div style={{ fontFamily: UI_COL, color: C_COL.txt }}>
       <style>{`
@@ -2116,11 +2141,19 @@ function DebtCollect() {
             </div>
 
             <div style={{ display: "flex", gap: 9, marginTop: 12, flexWrap: "wrap" }}>
-              <button className="btn" onClick={markSent} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
-                {isSent ? <><CheckCircle2 size={15} />{t("col.sent", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</> : <><Send size={15} />{t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>}
+              <button className="btn" onClick={doSend} disabled={sending} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, opacity: sending ? 0.7 : 1, cursor: sending ? "default" : "pointer", color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
+                {sending ? <><Send size={15} />{t("col.send.sending")}</>
+                  : isSent ? <><CheckCircle2 size={15} />{t("col.sent", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>
+                  : <><Send size={15} />{canRealEmail ? t("col.send.real") : t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>}
               </button>
               <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, fontWeight: 700, fontSize: 13, color: C_COL.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_COL.line}` }}><Calendar size={15} />{t("col.schedule.btn")}</button>
             </div>
+            {!DEMO_MODE && channel === "email" && cur && !cur.email && (
+              <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.gold, display: "flex", alignItems: "center", gap: 6 }}><Info size={13} />{t("col.send.noEmail")}</div>
+            )}
+            {sendErr && (
+              <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.red, display: "flex", alignItems: "flex-start", gap: 6 }}><AlertTriangle size={13} style={{ flex: "0 0 auto", marginTop: 1 }} />{sendErr}</div>
+            )}
 
             {/* schedule / escalation */}
             <div style={{ marginTop: 16 }}>
