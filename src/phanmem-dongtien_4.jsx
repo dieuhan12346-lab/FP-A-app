@@ -1696,6 +1696,8 @@ function DebtCollect() {
   const { company } = useCompany();
   const currency = company?.currency || "VND";
   const isVnCompany = (company?.country || "VN") === "VN"; // ngoài VN → nhắc nợ toàn tiếng Anh
+  // Kênh chat: VN dùng Zalo, ngoài VN dùng WhatsApp (giữ id "zalo" cho logic soạn tin/lịch)
+  const chName = (ch) => (ch && ch.id === "zalo" && !isVnCompany ? "WhatsApp" : ch && ch.name);
   const fmtTr_COL = (m) => fmtCompactM(m, currency);
   const [sel, setSel] = useState(DEBTORS_COL[0].id);
   const [channel, setChannel] = useState("email");
@@ -1788,7 +1790,7 @@ function DebtCollect() {
             <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
               {CHANNELS_COL.map((ch) => { const Ic = ch.icon; const on = ch.id === channel; return (
                 <button key={ch.id} className="btn" onClick={() => setChannel(ch.id)} style={{ flex: "1 1 0", minWidth: 0, whiteSpace: "nowrap", display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "10px 8px", borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: on ? ch.color : C_COL.sub, background: on ? ch.color + "1c" : C_COL.panel2, border: `1px solid ${on ? ch.color + "66" : C_COL.line}` }}>
-                  <Ic size={14} style={{ flex: "0 0 auto" }} />{ch.name}
+                  <Ic size={14} style={{ flex: "0 0 auto" }} />{chName(ch)}
                 </button>
               ); })}
             </div>
@@ -1804,7 +1806,7 @@ function DebtCollect() {
 
             <div style={{ display: "flex", gap: 9, marginTop: 12, flexWrap: "wrap" }}>
               <button className="btn" onClick={markSent} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
-                {isSent ? <><CheckCircle2 size={15} />{t("col.sent", { ch: CHANNELS_COL.find((c) => c.id === channel).name })}</> : <><Send size={15} />{t("col.send", { ch: CHANNELS_COL.find((c) => c.id === channel).name })}</>}
+                {isSent ? <><CheckCircle2 size={15} />{t("col.sent", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</> : <><Send size={15} />{t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>}
               </button>
               <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, fontWeight: 700, fontSize: 13, color: C_COL.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_COL.line}` }}><Calendar size={15} />{t("col.schedule.btn")}</button>
             </div>
