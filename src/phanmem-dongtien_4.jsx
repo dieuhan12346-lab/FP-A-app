@@ -10,7 +10,8 @@ import { saveInvoiceUpload, loadLatestInvoiceUpload, listInvoiceUploads, loadInv
 import { supabase } from "./lib/supabase";
 import { loadAccounts, accountName } from "./lib/accounts";
 import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
-import { fetchCashflowData, addReceivablesFromInvoiceLines } from "./lib/cashflow";
+import { fetchCashflowData, addReceivablesFromInvoiceLines, setReceivableStatus } from "./lib/cashflow";
+import { fetchTransactions } from "./lib/transactions";
 import { fetchForecast } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
@@ -1604,12 +1605,14 @@ const clampCol = (x, a, b) => Math.max(a, Math.min(b, x));
 const fmtTr_COL = (m) => `${Math.round(m).toLocaleString("vi-VN")} tr`;
 
 const DEBTORS_COL = [
-  { id: "d1", name: "Cty TNHH TM Minh Phát",     code: "131.0042", amount: 320, days: 45, onTime: 0.92, contact: "Anh Tuấn — Kế toán trưởng" },
+  { id: "d1", name: "Cty TNHH TM Minh Phát",     code: "131.0042", amount: 320, days: 45, onTime: 0.92, contact: "Anh Tuấn — Kế toán trưởng",
+    invoices: [{ code: "HĐ 0042", amount: 180, days: 45 }, { code: "HĐ 0088", amount: 140, days: 32 }] },
   { id: "d2", name: "Cty CP Xây dựng Hoàng Gia", code: "131.0017", amount: 280, days: 30, onTime: 0.88, contact: "Chị Hà — Phòng tài chính" },
-  { id: "d3", name: "Cty TNHH SX Tân Tiến",      code: "131.0008", amount: 150, days: 60, onTime: 0.70, contact: "Anh Dũng — Giám đốc" },
+  { id: "d3", name: "Cty TNHH SX Tân Tiến",      code: "131.0008", amount: 150, days: 72, onTime: 0.70, contact: "Anh Dũng — Giám đốc" },
   { id: "d4", name: "Cty CP Dược phẩm An Khang", code: "131.0051", amount: 95,  days: 15, onTime: 0.95, contact: "Chị Lan — Kế toán" },
   { id: "d5", name: "DNTN Thành Đạt",            code: "131.0029", amount: 60,  days: 22, onTime: 0.80, contact: "Anh Nam — Chủ DN" },
-  { id: "d6", name: "Global Tech Solutions Ltd.", code: "131.0063", amount: 480, days: 38, onTime: 0.85, contact: "Mr. James Chen — Finance Manager", lang: "en" },
+  { id: "d6", name: "Global Tech Solutions Ltd.", code: "131.0063", amount: 480, days: 38, onTime: 0.85, contact: "Mr. James Chen — Finance Manager", lang: "en",
+    invoices: [{ code: "INV-2201", amount: 300, days: 38 }, { code: "INV-2255", amount: 180, days: 25 }] },
   { id: "d7", name: "Pacific Trading Co., Ltd.",  code: "131.0071", amount: 210, days: 55, onTime: 0.72, contact: "Ms. Sarah Park — Accounts Payable", lang: "en" },
 ];
 function recoverP_COL(r) {
@@ -1623,58 +1626,107 @@ function tierCol(days) {
   return { key: "gentle", labelKey: "col.tier.gentle", c: C_COL.gold, soft: C_COL.goldSoft };
 }
 
+/* Danh sách nhắc nợ THẬT: công nợ phải thu QUÁ HẠN (dueDate < hôm nay, chưa trả).
+   Đưa về đúng shape debtor mà UI + draftCol dùng. amount → TRIỆU. */
+function buildCollectionsReal(cfData) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Gộp tất cả hóa đơn quá hạn của CÙNG một khách → 1 lời nhắc (như Bizzi).
+  const groups = {};
+  for (const r of (cfData.receivables || [])) {
+    if (r.status === "paid") continue;
+    const days = daysOverdue(r.dueDate, today);
+    if (days <= 0) continue; // chỉ khoản đã quá hạn
+    const key = String(r.customer || "—").trim().toLowerCase();
+    if (!groups[key]) groups[key] = { name: r.customer, invoices: [], amount: 0, days: 0, email: "" };
+    const g = groups[key];
+    g.invoices.push({ code: r.invoiceNo ? `HĐ ${r.invoiceNo}` : "—", amount: (Number(r.amount) || 0) / 1e6, days, dueDate: r.dueDate });
+    g.amount += (Number(r.amount) || 0) / 1e6;
+    if (days > g.days) g.days = days;                  // hạn xa nhất quyết định giọng văn
+    if (!g.email && r.customerEmail) g.email = r.customerEmail;
+  }
+  return Object.entries(groups).map(([key, g]) => {
+    const invoices = g.invoices.sort((a, b) => b.days - a.days);
+    return {
+      id: key,
+      name: g.name,
+      contact: g.name,                  // chưa thu thập người liên hệ → dùng tên khách
+      amount: g.amount,
+      days: g.days,
+      onTime: 0.85,                     // chưa có lịch sử trả
+      email: g.email,
+      invoices,
+      code: invoices[0] ? invoices[0].code : "—",
+    };
+  });
+}
+
 /* AI-drafted message templates per channel & tone.
    forceEn: hồ sơ công ty ngoài Việt Nam → mọi tin nhắc nợ đều tiếng Anh,
    không còn phân biệt "doanh nghiệp nước ngoài" theo từng con nợ. */
 function draftCol(r, channel, currency = "VND", forceEn = false) {
   const tier = tierCol(r.days);
   const cty = r.name;
+  const invs = (r.invoices && r.invoices.length) ? r.invoices : [{ code: r.code, amount: r.amount, days: r.days }];
+  const multi = invs.length > 1;
 
   // English templates (foreign debtor của công ty VN, hoặc toàn bộ với công ty ngoài VN)
   if (forceEn || r.lang === "en") {
     const amtEn = fmtCompactM(r.amount, currency);
+    const upTo = multi ? "up to " : "";
+    const refEn = multi ? `across ${invs.length} invoices` : `ref: ${r.code}`;
+    const subjEn = multi ? `${invs.length} invoices` : `Invoice ${r.code}`;
+    const listEn = multi ? "\n\nOutstanding invoices:\n" + invs.map((iv) => `  • ${iv.code} — ${fmtCompactM(iv.amount, currency)} — ${iv.days} days overdue`).join("\n") + "\n" : "";
+    const leadEn = multi ? "a total of" : "invoice";
+    const LeadEn = multi ? "A total of" : "Invoice";
     if (channel === "email") {
       if (tier.key === "gentle") return {
-        subject: `[Payment Reminder] Invoice ${r.code} — ${cty}`,
-        body: `Dear ${r.contact},\n\nWe hope this message finds you well. This is a friendly reminder that invoice ${amtEn} (ref: ${r.code}) is now ${r.days} days due.\n\nWe kindly ask you to arrange payment at your earliest convenience. If payment has already been made, please disregard this notice.\n\nThank you for your continued partnership.\n\nBest regards.` };
+        subject: `[Payment Reminder] ${subjEn} — ${cty}`,
+        body: `Dear ${r.contact},\n\nWe hope this message finds you well. This is a friendly reminder that ${leadEn} ${amtEn} (${refEn}) is now ${upTo}${r.days} days due.${listEn}\nWe kindly ask you to arrange payment at your earliest convenience. If payment has already been made, please disregard this notice.\n\nThank you for your continued partnership.\n\nBest regards.` };
       if (tier.key === "firm") return {
-        subject: `[Overdue ${r.days} Days] Payment Request — ${r.code}`,
-        body: `Dear ${r.contact},\n\nWe wish to inform you that invoice ${amtEn} (ref: ${r.code}) is now ${r.days} days overdue. We have not yet received payment.\n\nWe kindly request that you process this payment by end of month to avoid any impact on your credit limit and future orders.\n\nWe look forward to your prompt response.\n\nBest regards.` };
+        subject: `[Overdue ${r.days} Days] Payment Request — ${subjEn}`,
+        body: `Dear ${r.contact},\n\nWe wish to inform you that ${leadEn} ${amtEn} (${refEn}) is now ${upTo}${r.days} days overdue. We have not yet received payment.${listEn}\nWe kindly request that you process this payment by end of month to avoid any impact on your credit limit and future orders.\n\nWe look forward to your prompt response.\n\nBest regards.` };
       return {
-        subject: `[URGENT] Overdue Invoice ${r.code} — ${r.days} Days — Immediate Action Required`,
-        body: `Dear ${r.contact},\n\nInvoice ${amtEn} (ref: ${r.code}) is now seriously overdue by ${r.days} days. This is a formal demand for payment.\n\nWe require full payment within 3 business days. Failure to do so will result in the temporary suspension of supply and escalation to our collections department.\n\nWe trust you will treat this matter with the urgency it deserves.\n\nYours sincerely.` };
+        subject: `[URGENT] ${subjEn} — ${upTo}${r.days} Days Overdue — Immediate Action Required`,
+        body: `Dear ${r.contact},\n\n${LeadEn} ${amtEn} (${refEn}) is now seriously overdue by ${upTo}${r.days} days. This is a formal demand for payment.${listEn}\nWe require full payment within 3 business days. Failure to do so will result in the temporary suspension of supply and escalation to our collections department.\n\nWe trust you will treat this matter with the urgency it deserves.\n\nYours sincerely.` };
     }
+    const zRefEn = multi ? `${invs.length} invoices totalling ${amtEn}` : `invoice ${amtEn} (${r.code})`;
     if (channel === "zalo") {
-      if (tier.key === "gentle") return { body: `Hi ${r.contact} 👋\nJust a friendly reminder that invoice ${amtEn} (${r.code}) is now due. Please arrange payment at your convenience. Thank you! 🙏` };
-      if (tier.key === "firm") return { body: `Hi ${r.contact},\nInvoice ${amtEn} (${r.code}) is ${r.days} days overdue. Please arrange payment before month-end to avoid any impact on future orders. Thank you!` };
-      return { body: `Hi ${r.contact},\nInvoice ${amtEn} (${r.code}) is ${r.days} days overdue. Please settle within 3 business days — otherwise we will need to suspend delivery. Your cooperation is appreciated. 🙏` };
+      if (tier.key === "gentle") return { body: `Hi ${r.contact} 👋\nJust a friendly reminder that ${zRefEn} is now due. Please arrange payment at your convenience. Thank you! 🙏` };
+      if (tier.key === "firm") return { body: `Hi ${r.contact},\n${zRefEn} — ${upTo}${r.days} days overdue. Please arrange payment before month-end to avoid any impact on future orders. Thank you!` };
+      return { body: `Hi ${r.contact},\n${zRefEn} — ${upTo}${r.days} days overdue. Please settle within 3 business days — otherwise we will need to suspend delivery. Your cooperation is appreciated. 🙏` };
     }
     // sms (english)
-    if (tier.key === "gentle") return { body: `${cty}: Reminder — invoice ${amtEn} (${r.code}) is due. Please arrange payment. Thank you!` };
-    if (tier.key === "firm") return { body: `${cty}: Invoice ${amtEn} (${r.code}) is ${r.days} days overdue. Please pay by month-end. Thank you!` };
-    return { body: `[URGENT] ${cty}: Invoice ${amtEn} (${r.code}) overdue ${r.days} days. Pay within 3 days or supply suspended. Contact us immediately!` };
+    if (tier.key === "gentle") return { body: `${cty}: Reminder — ${zRefEn} is due. Please arrange payment. Thank you!` };
+    if (tier.key === "firm") return { body: `${cty}: ${zRefEn}, ${upTo}${r.days} days overdue. Please pay by month-end. Thank you!` };
+    return { body: `[URGENT] ${cty}: ${zRefEn} overdue ${upTo}${r.days} days. Pay within 3 days or supply suspended. Contact us immediately!` };
   }
 
   // Vietnamese templates
   const amt = currency === "VND" ? `${r.amount.toLocaleString("vi-VN")} triệu đồng` : fmtCompactM(r.amount, currency);
+  const toi = multi ? "tới " : "";
+  const refVi = multi ? `gồm ${invs.length} hóa đơn` : `mã ${r.code}`;
+  const subjVi = multi ? `${invs.length} hóa đơn` : r.code;
+  const listVi = multi ? "\n\nDanh sách hóa đơn quá hạn:\n" + invs.map((iv) => `  • ${iv.code} — ${currency === "VND" ? iv.amount.toLocaleString("vi-VN") + " tr" : fmtCompactM(iv.amount, currency)} — quá hạn ${iv.days} ngày`).join("\n") + "\n" : "";
   if (channel === "email") {
-    if (tier.key === "gentle") return { subject: `[Nhắc lịch thanh toán] Công nợ ${r.code} — ${cty}`,
-      body: `Kính gửi ${r.contact},\n\nCông ty chúng tôi xin trân trọng nhắc lịch thanh toán khoản công nợ ${amt} (mã ${r.code}), hiện đã đến hạn ${r.days} ngày.\n\nKính mong Quý công ty thu xếp thanh toán trong thời gian sớm nhất. Nếu đã chuyển khoản, xin bỏ qua thông báo này.\n\nTrân trọng cảm ơn sự hợp tác của Quý công ty.` };
-    if (tier.key === "firm") return { subject: `[Quá hạn ${r.days} ngày] Đề nghị thanh toán công nợ ${r.code}`,
-      body: `Kính gửi ${r.contact},\n\nKhoản công nợ ${amt} (mã ${r.code}) của Quý công ty đã quá hạn ${r.days} ngày. Chúng tôi chưa ghi nhận được thanh toán.\n\nĐề nghị Quý công ty thanh toán trước ngày cuối tháng để tránh ảnh hưởng đến hạn mức tín dụng và các đơn hàng tiếp theo.\n\nRất mong nhận được phản hồi sớm. Trân trọng.` };
-    return { subject: `[KHẨN] Công nợ quá hạn ${r.days} ngày — ${r.code} cần xử lý ngay`,
-      body: `Kính gửi ${r.contact},\n\nKhoản công nợ ${amt} (mã ${r.code}) đã quá hạn nghiêm trọng (${r.days} ngày). Đây là thông báo nhắc nợ chính thức.\n\nĐề nghị Quý công ty thanh toán trong vòng 03 ngày làm việc. Sau thời hạn này, chúng tôi buộc phải tạm dừng cung cấp hàng hóa/dịch vụ và chuyển hồ sơ sang bộ phận xử lý công nợ.\n\nMong Quý công ty phối hợp. Trân trọng.` };
+    if (tier.key === "gentle") return { subject: `[Nhắc lịch thanh toán] Công nợ ${subjVi} — ${cty}`,
+      body: `Kính gửi ${r.contact},\n\nCông ty chúng tôi xin trân trọng nhắc lịch thanh toán khoản công nợ ${amt} (${refVi}), hiện đã đến hạn ${toi}${r.days} ngày.${listVi}\nKính mong Quý công ty thu xếp thanh toán trong thời gian sớm nhất. Nếu đã chuyển khoản, xin bỏ qua thông báo này.\n\nTrân trọng cảm ơn sự hợp tác của Quý công ty.` };
+    if (tier.key === "firm") return { subject: `[Quá hạn ${r.days} ngày] Đề nghị thanh toán công nợ ${subjVi}`,
+      body: `Kính gửi ${r.contact},\n\nKhoản công nợ ${amt} (${refVi}) của Quý công ty đã quá hạn ${toi}${r.days} ngày. Chúng tôi chưa ghi nhận được thanh toán.${listVi}\nĐề nghị Quý công ty thanh toán trước ngày cuối tháng để tránh ảnh hưởng đến hạn mức tín dụng và các đơn hàng tiếp theo.\n\nRất mong nhận được phản hồi sớm. Trân trọng.` };
+    return { subject: `[KHẨN] Công nợ quá hạn ${r.days} ngày — ${subjVi} cần xử lý ngay`,
+      body: `Kính gửi ${r.contact},\n\nKhoản công nợ ${amt} (${refVi}) đã quá hạn nghiêm trọng (${toi}${r.days} ngày). Đây là thông báo nhắc nợ chính thức.${listVi}\nĐề nghị Quý công ty thanh toán trong vòng 03 ngày làm việc. Sau thời hạn này, chúng tôi buộc phải tạm dừng cung cấp hàng hóa/dịch vụ và chuyển hồ sơ sang bộ phận xử lý công nợ.\n\nMong Quý công ty phối hợp. Trân trọng.` };
   }
+  const zrVi = multi ? `${invs.length} hóa đơn (tổng ${amt})` : `khoản công nợ ${amt} (${r.code})`;
   if (channel === "zalo") {
-    if (tier.key === "gentle") return { body: `Chào ${r.contact} 👋\nDạ ${cty} mình xin nhắc nhẹ khoản công nợ ${amt} (${r.code}) vừa đến hạn ạ. Anh/chị thu xếp giúp em nhé. Em cảm ơn nhiều ạ! 🙏` };
-    if (tier.key === "firm") return { body: `Chào ${r.contact},\nKhoản ${amt} (${r.code}) đã quá hạn ${r.days} ngày rồi ạ. Anh/chị hỗ trợ thanh toán giúp em trước cuối tháng nhé, để không ảnh hưởng đơn hàng tới. Em cảm ơn ạ!` };
-    return { body: `Chào ${r.contact},\nEm xin thông báo khoản ${amt} (${r.code}) đã quá hạn ${r.days} ngày. Mong anh/chị xử lý trong 3 ngày tới giúp em ạ, nếu không bên em phải tạm dừng giao hàng. Rất mong anh/chị phối hợp 🙏` };
+    if (tier.key === "gentle") return { body: `Chào ${r.contact} 👋\nDạ ${cty} mình xin nhắc nhẹ ${zrVi} vừa đến hạn ạ. Anh/chị thu xếp giúp em nhé. Em cảm ơn nhiều ạ! 🙏` };
+    if (tier.key === "firm") return { body: `Chào ${r.contact},\n${zrVi} đã quá hạn ${toi}${r.days} ngày rồi ạ. Anh/chị hỗ trợ thanh toán giúp em trước cuối tháng nhé, để không ảnh hưởng đơn hàng tới. Em cảm ơn ạ!` };
+    return { body: `Chào ${r.contact},\nEm xin thông báo ${zrVi} đã quá hạn ${toi}${r.days} ngày. Mong anh/chị xử lý trong 3 ngày tới giúp em ạ, nếu không bên em phải tạm dừng giao hàng. Rất mong anh/chị phối hợp 🙏` };
   }
   // sms (plain ASCII, no dấu)
   const amtSms = currency === "VND" ? `${r.amount}tr` : `${r.amount}${currency}`;
-  if (tier.key === "gentle") return { body: `${cty}: Nhac lich thanh toan cong no ${amtSms} (${r.code}) vua den han. Vui long thu xep TT. Cam on!` };
-  if (tier.key === "firm") return { body: `${cty}: Cong no ${amtSms} (${r.code}) qua han ${r.days} ngay. De nghi TT truoc cuoi thang de khong anh huong don hang. Cam on!` };
-  return { body: `[KHAN] ${cty}: Cong no ${amtSms} (${r.code}) qua han ${r.days} ngay. De nghi TT trong 03 ngay, neu khong se tam dung giao hang. LH ngay!` };
+  const srVi = multi ? `${invs.length} HD tong ${amtSms}` : `cong no ${amtSms} (${r.code})`;
+  if (tier.key === "gentle") return { body: `${cty}: Nhac lich thanh toan ${srVi} vua den han. Vui long thu xep TT. Cam on!` };
+  if (tier.key === "firm") return { body: `${cty}: ${srVi} qua han ${toi}${r.days} ngay. De nghi TT truoc cuoi thang de khong anh huong don hang. Cam on!` };
+  return { body: `[KHAN] ${cty}: ${srVi} qua han ${toi}${r.days} ngay. De nghi TT trong 03 ngay, neu khong se tam dung giao hang. LH ngay!` };
 }
 
 const CHANNELS_COL = [
@@ -1691,6 +1743,99 @@ const SCHEDULE_COL = [
   { dKey: "col.sched.d4", actKey: "col.sched.act4", icon: AlertTriangle, c: C_COL.red },
 ];
 
+/* ---- Dashboard công nợ + tuổi nợ (áp dụng ý tưởng bảng chỉ số Bizzi) ---- */
+/* Ngày công nợ tính theo LỊCH ĐỊA PHƯƠNG: parse "YYYY-MM-DD" thành nửa đêm local
+   (không dùng new Date(str)=UTC, tránh lệch 1 ngày ở múi giờ +7 → sai nhóm tuổi nợ). */
+const pad2Col = (n) => String(n).padStart(2, "0");
+const fmtLocalDate = (d) => `${d.getFullYear()}-${pad2Col(d.getMonth() + 1)}-${pad2Col(d.getDate())}`;
+const parseLocalDate = (s) => { if (s instanceof Date) return s; const [y, m, d] = String(s).slice(0, 10).split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
+const daysOverdue = (dueDate, today) => Math.round((today - parseLocalDate(dueDate)) / 86400000);
+const isoOffset = (days) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + days); return fmtLocalDate(d); };
+
+/* Demo phải thu: khoản quá hạn lấy từ DEBTORS_COL (đồng bộ danh sách) + vài khoản trong hạn. amount = đồng. */
+function demoReceivablesAR() {
+  const overdue = DEBTORS_COL.map((d) => ({ id: d.id, customer: d.name, amount: d.amount * 1e6, dueDate: isoOffset(-d.days), status: "open", invoiceNo: d.code }));
+  const current = [
+    { id: "c1", customer: "Cty CP Thực phẩm Tân Việt", amount: 210e6, dueDate: isoOffset(12), status: "open", invoiceNo: "131.0088" },
+    { id: "c2", customer: "Cty TNHH Logistics Đại Dương", amount: 340e6, dueDate: isoOffset(6), status: "open", invoiceNo: "131.0090" },
+    { id: "c3", customer: "Cty CP Nội thất Hòa Phát", amount: 175e6, dueDate: isoOffset(21), status: "open", invoiceNo: "131.0093" },
+  ];
+  return [...overdue, ...current];
+}
+
+/* Gộp phải thu → chỉ số + phân loại tuổi nợ + top con nợ. amount vào = đồng, ra = triệu. */
+function arAnalytics(receivables) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const DAY = 86400000;
+  const open = (receivables || []).filter((r) => r.status !== "paid");
+  let total = 0, current = 0, b1 = 0, b2 = 0, b3 = 0;
+  let overdueAmt = 0, overdueCount = 0, curCount = 0, wDays = 0;
+  const byCustomer = {};
+  for (const r of open) {
+    const amt = (Number(r.amount) || 0) / 1e6;
+    if (amt <= 0) continue;
+    total += amt;
+    byCustomer[r.customer] = (byCustomer[r.customer] || 0) + amt;
+    const days = daysOverdue(r.dueDate, today);
+    if (days <= 0) { current += amt; curCount++; }
+    else {
+      overdueAmt += amt; overdueCount++; wDays += amt * days;
+      if (days <= 30) b1 += amt; else if (days <= 60) b2 += amt; else b3 += amt;
+    }
+  }
+  const top = Object.entries(byCustomer).map(([name, amt]) => ({ name, amt })).sort((a, b) => b.amt - a.amt).slice(0, 7);
+  return {
+    total, current, overdueAmt, curCount, overdueCount, b1, b2, b3,
+    pctOverdue: total > 0 ? overdueAmt / total : 0,
+    avgOverdueDays: overdueAmt > 0 ? Math.round(wDays / overdueAmt) : 0,
+    top, hasAny: open.length > 0,
+  };
+}
+
+/* ---- Đối soát công nợ: khớp giao dịch TIỀN VÀO (sao kê import) với hóa đơn phải thu ---- */
+const normRec = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9]+/g, " ").trim();
+
+/** Trả về các gợi ý đối soát 1:1 (mỗi giao dịch chỉ khớp 1 hóa đơn), ưu tiên độ tin cậy cao.
+ *  receivables: amount ĐỒNG; txns: [{id, date, amtIn, desc, note, voucherNo}]. */
+function reconcileMatches(receivables, txns) {
+  const open = (receivables || []).filter((r) => r.status !== "paid" && (Number(r.amount) || 0) > 0);
+  const ins = (txns || []).filter((t) => (Number(t.amtIn) || 0) > 0);
+  const used = new Set();
+  const out = [];
+  for (const r of open) {
+    const rAmt = Number(r.amount) || 0;
+    const tokens = normRec(r.customer).split(" ").filter((w) => w.length >= 3 && !["cty", "tnhh", "cong", "ty", "the", "and", "ltd", "llc", "inc", "corp"].includes(w));
+    let best = null;
+    for (const t of ins) {
+      if (used.has(t.id)) continue;
+      const rel = Math.abs((Number(t.amtIn) || 0) - rAmt) / rAmt;
+      if (rel > 0.01) continue;                 // chỉ xét khi số tiền khớp (±1%)
+      const desc = normRec(`${t.desc} ${t.note} ${t.voucherNo}`);
+      const nameHit = tokens.length > 0 && tokens.some((w) => desc.includes(w));
+      const invHit = r.invoiceNo && desc.includes(normRec(r.invoiceNo));
+      let conf = rel < 0.0001 ? 0.7 : 0.55;      // khớp gần đúng vs khớp tuyệt đối
+      if (nameHit) conf += 0.22;
+      if (invHit) conf += 0.15;
+      conf = Math.min(0.99, conf);
+      if (!best || conf > best.conf) best = { txn: t, conf, nameHit, invHit };
+    }
+    if (best) { used.add(best.txn.id); out.push({ receivable: r, ...best }); }
+  }
+  return out.sort((a, b) => b.conf - a.conf);
+}
+
+/* Demo đối soát: dựng vài giao dịch tiền vào khớp phải thu demo (amount ĐỒNG). */
+function demoReconcileMatches() {
+  const recv = demoReceivablesAR();
+  const by = (cust) => recv.find((r) => r.customer === cust);
+  const mk = (r, dOff, desc, extra) => r && ({ receivable: r, txn: { id: "tx_" + r.id, date: isoOffset(dOff), amtIn: r.amount, desc }, ...extra });
+  return [
+    mk(by("Cty CP Thực phẩm Tân Việt"), -1, "CK DEN:CTY CP THUC PHAM TAN VIET TT HD 131.0088", { conf: 0.97, nameHit: true, invHit: true }),
+    mk(by("Cty TNHH Logistics Đại Dương"), -2, "LOGISTICS DAI DUONG CHUYEN KHOAN THANH TOAN", { conf: 0.9, nameHit: true, invHit: false }),
+    mk(by("Cty CP Nội thất Hòa Phát"), -3, "IBFT THANH TOAN CONG NO THANG 7", { conf: 0.58, nameHit: false, invHit: false }),
+  ].filter(Boolean);
+}
+
 function DebtCollect() {
   const { t } = useT();
   const { company } = useCompany();
@@ -1699,9 +1844,17 @@ function DebtCollect() {
   // Kênh chat: VN dùng Zalo, ngoài VN dùng WhatsApp (giữ id "zalo" cho logic soạn tin/lịch)
   const chName = (ch) => (ch && ch.id === "zalo" && !isVnCompany ? "WhatsApp" : ch && ch.name);
   const fmtTr_COL = (m) => fmtCompactM(m, currency);
-  const [sel, setSel] = useState(DEBTORS_COL[0].id);
   const [channel, setChannel] = useState("email");
   const [sent, setSent] = useState(() => new Set());
+  const [cfData, setCfData] = useState(null); // dữ liệu thật từ Supabase
+  const [txns, setTxns] = useState([]);        // giao dịch tiền vào (sao kê import) — để đối soát
+  const [reconciled, setReconciled] = useState(() => new Set()); // id phải thu đã đối soát trong phiên
+
+  useEffect(() => {
+    if (DEMO_MODE || !company?.id) { setCfData(null); setTxns([]); return; }
+    fetchCashflowData(company.id).then(setCfData).catch(() => setCfData(null));
+    fetchTransactions(company.id).then(setTxns).catch(() => setTxns([]));
+  }, [company?.id]);
 
   useEffect(() => {
     const l = document.createElement("link"); l.rel = "stylesheet";
@@ -1709,12 +1862,36 @@ function DebtCollect() {
     document.head.appendChild(l); return () => { document.head.removeChild(l); };
   }, []);
 
-  const debtors = DEBTORS_COL.map((r) => ({ ...r, p: recoverP_COL(r), tier: tierCol(r.days) }))
-    .sort((a, b) => b.days - a.days);
+  // Con nợ: DEMO số minh hoạ; bản chính = công nợ quá hạn THẬT (rỗng nếu chưa có).
+  const debtors = useMemo(() => {
+    const base = DEMO_MODE ? DEBTORS_COL : (cfData && cfData.hasReal ? buildCollectionsReal(cfData) : []);
+    return base.map((r) => ({
+      ...r,
+      invoices: r.invoices && r.invoices.length ? r.invoices : [{ code: r.code, amount: r.amount, days: r.days, dueDate: null }],
+      p: recoverP_COL(r), tier: tierCol(r.days),
+    })).sort((a, b) => b.days - a.days);
+  }, [cfData]);
+  // Dashboard công nợ: demo dùng số minh hoạ đồng bộ danh sách; bản chính dùng toàn bộ phải thu thật.
+  const ar = useMemo(() => arAnalytics(DEMO_MODE ? demoReceivablesAR() : (cfData?.receivables || [])), [cfData]);
+  // Đối soát: gợi ý khớp tiền vào ↔ hóa đơn (ẩn khoản vừa đối soát trong phiên).
+  const recMatches = useMemo(
+    () => (DEMO_MODE ? demoReconcileMatches() : reconcileMatches(cfData?.receivables || [], txns)).filter((m) => !reconciled.has(m.receivable.id)),
+    [cfData, txns, reconciled]
+  );
+  const confirmMatch = (m) => {
+    setReconciled((s) => new Set(s).add(m.receivable.id));
+    if (!DEMO_MODE && m.receivable.id) {
+      setReceivableStatus(m.receivable.id, "paid")
+        .then(() => { if (company?.id) fetchCashflowData(company.id).then(setCfData).catch(() => {}); })
+        .catch(() => setReconciled((s) => { const n = new Set(s); n.delete(m.receivable.id); return n; })); // lỗi → bỏ đánh dấu
+    }
+  };
+  const [sel, setSel] = useState(null);
+  useEffect(() => { setSel((s) => (debtors.find((r) => r.id === s) ? s : debtors[0]?.id || null)); }, [debtors]);
   const cur = debtors.find((r) => r.id === sel);
-  const msg = draftCol(cur, channel, currency, !isVnCompany);
-  const markSent = () => setSent((s) => new Set(s).add(cur.id + ":" + channel));
-  const isSent = sent.has(cur.id + ":" + channel);
+  const msg = cur ? draftCol(cur, channel, currency, !isVnCompany) : null;
+  const markSent = () => cur && setSent((s) => new Set(s).add(cur.id + ":" + channel));
+  const isSent = cur ? sent.has(cur.id + ":" + channel) : false;
 
   return (
     <div style={{ fontFamily: UI_COL, color: C_COL.txt }}>
@@ -1740,11 +1917,114 @@ function DebtCollect() {
           <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: C_COL.violet, background: C_COL.violetSoft, padding: "7px 13px", borderRadius: 20 }}><Sparkles size={13} />{t("col.badge")}</span>
         </header>
 
+        {/* ===== DASHBOARD CÔNG NỢ + TUỔI NỢ ===== */}
+        {ar.hasAny && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", marginBottom: 14 }}>
+              {[
+                { icon: Wallet, c: C_COL.gold, label: t("col.ar.total"), val: fmtTr_COL(ar.total), sub: t("col.ar.nItems", { n: ar.curCount + ar.overdueCount }) },
+                { icon: CheckCircle2, c: C_COL.green, label: t("col.ar.current"), val: fmtTr_COL(ar.current), sub: t("col.ar.nItems", { n: ar.curCount }) },
+                { icon: AlertTriangle, c: C_COL.red, label: t("col.ar.overdue"), val: fmtTr_COL(ar.overdueAmt), sub: t("col.ar.overdueSub", { pct: Math.round(ar.pctOverdue * 100), n: ar.overdueCount }) },
+                { icon: Clock, c: C_COL.orange, label: t("col.ar.avgdays"), val: t("col.ar.dayVal", { d: ar.avgOverdueDays }), sub: t("col.ar.avgdaysSub") },
+              ].map((k, i) => { const Ic = k.icon; return (
+                <div key={i} className="card" style={{ ...panelCol, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, display: "grid", placeItems: "center", background: k.c + "1e" }}><Ic size={16} color={k.c} /></div>
+                    <span style={{ fontSize: 11.5, color: C_COL.sub, fontWeight: 600 }}>{k.label}</span>
+                  </div>
+                  <div className="tnum" style={{ fontFamily: DISP_COL, fontWeight: 800, fontSize: 20, color: C_COL.txt, letterSpacing: "-0.02em" }}>{k.val}</div>
+                  <div style={{ fontSize: 11, color: C_COL.sub, marginTop: 3 }}>{k.sub}</div>
+                </div>
+              ); })}
+            </div>
+            <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+              {/* Phân loại tuổi nợ */}
+              <section className="card" style={panelCol}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}><Layers size={16} color={C_COL.cyan} /><h3 style={h3Col}>{t("col.ar.aging")}</h3></div>
+                {(() => {
+                  const buckets = [
+                    { label: t("col.ar.bCurrent"), v: ar.current, c: C_COL.green },
+                    { label: t("col.ar.b1"), v: ar.b1, c: C_COL.gold },
+                    { label: t("col.ar.b2"), v: ar.b2, c: C_COL.orange },
+                    { label: t("col.ar.b3"), v: ar.b3, c: C_COL.red },
+                  ];
+                  const maxB = Math.max(1, ...buckets.map((b) => b.v));
+                  return (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, alignItems: "end", height: 178 }}>
+                      {buckets.map((b, i) => (
+                        <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", gap: 6 }}>
+                          <span className="tnum" style={{ fontSize: 11, fontWeight: 700, color: b.c }}>{fmtTr_COL(b.v)}</span>
+                          <div style={{ width: "70%", maxWidth: 56, height: `${Math.max(3, (b.v / maxB) * 122)}px`, borderRadius: "7px 7px 0 0", background: `linear-gradient(180deg, ${b.c}, ${b.c}99)` }} />
+                          <span style={{ fontSize: 10.5, color: C_COL.sub, textAlign: "center", lineHeight: 1.2 }}>{b.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </section>
+              {/* Top khách nợ nhiều nhất */}
+              <section className="card" style={panelCol}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}><Users size={16} color={C_COL.violet} /><h3 style={h3Col}>{t("col.ar.top")}</h3></div>
+                {(() => {
+                  const maxT = Math.max(1, ...ar.top.map((d) => d.amt));
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                      {ar.top.map((d, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                          <span style={{ flex: "1 1 0", minWidth: 0, fontSize: 11.5, color: C_COL.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={d.name}>{d.name}</span>
+                          <div style={{ flex: "0 0 84px", height: 14, borderRadius: 5, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+                            <div style={{ width: `${Math.max(4, (d.amt / maxT) * 100)}%`, height: "100%", borderRadius: 5, background: `linear-gradient(90deg, ${C_COL.cyan}, ${C_COL.violet})` }} />
+                          </div>
+                          <span className="tnum" style={{ flex: "0 0 auto", minWidth: 56, textAlign: "right", fontSize: 11.5, fontWeight: 700, color: C_COL.txt }}>{fmtTr_COL(d.amt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </section>
+            </div>
+          </div>
+        )}
+
+        {/* ===== ĐỐI SOÁT CÔNG NỢ (khớp tiền vào ↔ hóa đơn) ===== */}
+        {recMatches.length > 0 && (
+          <section className="card" style={{ ...panelCol, marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <ScanLine size={16} color={C_COL.green} />
+              <h3 style={h3Col}>{t("col.rec.title")}</h3>
+              <span className="tnum" style={{ fontSize: 11, fontWeight: 800, color: C_COL.green, background: C_COL.greenSoft, padding: "2px 8px", borderRadius: 20 }}>{recMatches.length}</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: C_COL.sub, marginBottom: 12, lineHeight: 1.5 }}>{t("col.rec.desc")}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {recMatches.map((m, i) => {
+                const conf = Math.round(m.conf * 100);
+                const cc = m.conf >= 0.85 ? C_COL.green : m.conf >= 0.65 ? C_COL.gold : C_COL.orange;
+                return (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto minmax(0,1.2fr) auto auto", gap: 12, alignItems: "center", padding: "10px 13px", borderRadius: 11, background: C_COL.panel2, border: `1px solid ${C_COL.line}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.receivable.customer}</div>
+                      <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2 }}>{m.receivable.invoiceNo ? `HĐ ${m.receivable.invoiceNo}` : "—"} · {fmtTr_COL((Number(m.receivable.amount) || 0) / 1e6)}</div>
+                    </div>
+                    <ArrowRight size={15} color={C_COL.sub} style={{ flex: "0 0 auto" }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: C_COL.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={m.txn.desc}>{m.txn.desc || t("col.rec.payment")}</div>
+                      <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2 }}>{m.txn.date} · {fmtTr_COL((Number(m.txn.amtIn) || 0) / 1e6)}</div>
+                    </div>
+                    <span className="tnum" style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 800, color: cc, background: cc + "1e", padding: "3px 9px", borderRadius: 20, whiteSpace: "nowrap" }}>{t("col.rec.match", { p: conf })}</span>
+                    <button className="btn" onClick={() => confirmMatch(m)} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 9, fontWeight: 700, fontSize: 12, color: "#08130d", background: C_COL.green }}><Check size={13} />{t("col.rec.confirm")}</button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0,290px) minmax(0,1.55fr)" }}>
           {/* DEBTOR LIST */}
           <section className="card" style={panelCol}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}><Phone size={16} color={C_COL.gold} /><h3 style={h3Col}>{t("col.list.title")}</h3></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {debtors.length === 0 && <div style={{ fontSize: 12, color: C_COL.sub, padding: "8px 2px", lineHeight: 1.5 }}>{t("col.empty.title")}</div>}
               {debtors.map((r) => {
                 const on = r.id === sel; const pc = r.p >= 0.8 ? C_COL.green : r.p >= 0.6 ? C_COL.gold : C_COL.red;
                 return (
@@ -1755,7 +2035,7 @@ function DebtCollect() {
                           <div style={{ fontWeight: 700, fontSize: 12.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
                           {isVnCompany && r.lang === "en" && <span style={{ flex: "0 0 auto", fontSize: 9, fontWeight: 800, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "1px 5px", borderRadius: 4 }}>EN</span>}
                         </div>
-                        <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2 }}>{r.code} · {t("col.overdue", { d: r.days })}</div>
+                        <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2 }}>{r.invoices.length > 1 ? t("col.nInvoices", { n: r.invoices.length }) : r.code} · {t("col.overdue", { d: r.days })}</div>
                       </div>
                       <span style={{ flex: "0 0 auto", fontSize: 9.5, fontWeight: 800, color: r.tier.c, background: r.tier.soft, padding: "2px 7px", borderRadius: 5, whiteSpace: "nowrap" }}>{t(r.tier.labelKey)}</span>
                     </div>
@@ -1775,6 +2055,13 @@ function DebtCollect() {
 
           {/* COMPOSER */}
           <section className="card" style={panelCol}>
+            {!cur ? (
+              <div style={{ padding: "48px 20px", textAlign: "center" }}>
+                <ShieldCheck size={24} color={C_COL.green} />
+                <div style={{ marginTop: 10, fontSize: 13.5, fontWeight: 700, color: C_COL.txt }}>{t("col.empty.title")}</div>
+                <div style={{ marginTop: 5, fontSize: 12, color: C_COL.sub, lineHeight: 1.5 }}>{t("col.empty.desc")}</div>
+              </div>
+            ) : (<>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1785,6 +2072,30 @@ function DebtCollect() {
               </div>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, color: cur.tier.c, background: cur.tier.soft, padding: "5px 11px", borderRadius: 20 }}>{t("col.tone", { label: t(cur.tier.labelKey) })}</span>
             </div>
+
+            {/* bảng hóa đơn quá hạn (khi gộp nhiều hóa đơn) */}
+            {cur.invoices.length > 1 && (
+              <div style={{ marginTop: 12, borderRadius: 12, background: C_COL.panel2, border: `1px solid ${C_COL.line}`, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderBottom: `1px solid ${C_COL.line}`, fontSize: 11, fontWeight: 700, color: C_COL.sub }}>
+                  <FileText size={12} color={C_COL.cyan} />{t("col.inv.title", { n: cur.invoices.length })}
+                </div>
+                {cur.invoices.map((iv, i) => {
+                  const it = tierCol(iv.days);
+                  return (
+                    <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 92px", gap: 10, alignItems: "center", padding: "8px 13px", borderTop: i ? `1px solid ${C_COL.line2}` : "none" }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: C_COL.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{iv.code}</span>
+                      <span className="tnum" style={{ fontSize: 12, fontWeight: 700, color: C_COL.txt, textAlign: "right" }}>{fmtTr_COL(iv.amount)}</span>
+                      <span className="tnum" style={{ fontSize: 10.5, fontWeight: 700, color: it.c, textAlign: "right" }}>{t("col.overdue", { d: iv.days })}</span>
+                    </div>
+                  );
+                })}
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 92px", gap: 10, alignItems: "center", padding: "8px 13px", borderTop: `1px solid ${C_COL.line}`, background: "rgba(255,255,255,.02)" }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: C_COL.sub }}>{t("col.inv.total")}</span>
+                  <span className="tnum" style={{ fontSize: 12.5, fontWeight: 800, color: C_COL.gold, textAlign: "right" }}>{fmtTr_COL(cur.amount)}</span>
+                  <span />
+                </div>
+              </div>
+            )}
 
             {/* channel tabs */}
             <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
@@ -1824,6 +2135,7 @@ function DebtCollect() {
                 ); })}
               </div>
             </div>
+            </>)}
           </section>
         </div>
 

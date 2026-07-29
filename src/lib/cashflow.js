@@ -11,6 +11,7 @@ function db() {
 const mapRecv = (r) => ({
   id: r.id, customer: r.customer, amount: Number(r.amount) || 0,
   dueDate: r.due_date, status: r.status, source: r.source, invoiceNo: r.invoice_no || "",
+  customerEmail: r.customer_email || "",
 });
 const mapPay = (p) => ({
   id: p.id, label: p.label, amount: Number(p.amount) || 0,
@@ -47,9 +48,9 @@ export async function fetchCashflowData(companyId) {
   };
 }
 
-export async function addReceivable(companyId, { customer, amount, dueDate }) {
+export async function addReceivable(companyId, { customer, amount, dueDate, customerEmail }) {
   const { error } = await db().from("receivables")
-    .insert({ company_id: companyId, customer, amount, due_date: dueDate });
+    .insert({ company_id: companyId, customer, amount, due_date: dueDate, customer_email: customerEmail || null });
   if (error) throw error;
 }
 
