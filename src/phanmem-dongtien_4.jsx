@@ -2072,8 +2072,10 @@ function DebtCollect() {
     }
   };
 
-  // Gửi hỗ trợ (mô hình A, miễn phí): mở sẵn app SMS/Zalo/WhatsApp với tin đã soạn, người dùng bấm Gửi.
+  // Gửi hỗ trợ (mô hình A, miễn phí): mở sẵn app SMS/Zalo/WhatsApp với tin đã soạn.
+  // CHỈ MỞ app — KHÔNG tự đánh dấu đã gửi; người dùng gửi trong app xong quay lại bấm "Xác nhận đã gửi".
   const [copiedZalo, setCopiedZalo] = useState(false);
+  const [opened, setOpened] = useState(() => new Set()); // "id:channel" đã mở app (chờ xác nhận)
   const openAssisted = () => {
     if (!cur) return;
     setSendErr("");
@@ -2090,11 +2092,16 @@ function DebtCollect() {
         window.open(`https://zalo.me/${phone.replace(/\D/g, "")}`, "_blank"); // Zalo không cho chèn sẵn text → đã chép để dán
       }
     }
-    markSent();
+    setOpened((o) => new Set(o).add(cur.id + ":" + channel)); // đã mở → hiện nút xác nhận
   };
   const isEmailCh = channel === "email";
+  const isOpened = cur ? opened.has(cur.id + ":" + channel) : false;
   const hasContact = isEmailCh ? !!cur?.email : !!cur?.phone;   // email cần email; sms/zalo cần SĐT
-  const onSendClick = () => (isEmailCh ? doSend() : openAssisted());
+  const onSendClick = () => {
+    if (isEmailCh) return doSend();          // email: gửi thật
+    if (isOpened) return markSent();          // đã mở app rồi → bấm để xác nhận đã gửi
+    return openAssisted();                    // chưa mở → mở app SMS/Zalo/WhatsApp
+  };
 
   return (
     <div style={{ fontFamily: UI_COL, color: C_COL.txt }}>
@@ -2373,9 +2380,14 @@ function DebtCollect() {
               <button className="btn" onClick={onSendClick} disabled={blocked} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, opacity: blocked ? 0.6 : 1, cursor: blocked ? "default" : "pointer", color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
                 {sending ? <><Send size={15} />{t("col.send.sending")}</>
                   : isSent ? <><CheckCircle2 size={15} />{t("col.sent", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>
-                  : <><Send size={15} />{isEmailCh ? (canRealEmail ? t("col.send.real") : t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })) : (channel === "sms" ? t("col.assist.sms") : (isVnCompany ? t("col.assist.zalo") : t("col.assist.wa")))}</>}
+                  : isEmailCh ? <><Send size={15} />{canRealEmail ? t("col.send.real") : t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>
+                  : isOpened ? <><CheckCircle2 size={15} />{t("col.assist.confirm")}</>
+                  : <><Send size={15} />{channel === "sms" ? t("col.assist.sms") : (isVnCompany ? t("col.assist.zalo") : t("col.assist.wa"))}</>}
               </button>
               ); })()}
+              {!isEmailCh && isOpened && !isSent && (
+                <button className="btn" onClick={openAssisted} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "11px 14px", borderRadius: 11, fontWeight: 700, fontSize: 12.5, color: C_COL.sub, background: "rgba(255,255,255,.05)", border: `1px solid ${C_COL.line}` }}>{t("col.assist.reopen")}</button>
+              )}
               <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, fontWeight: 700, fontSize: 13, color: C_COL.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_COL.line}` }}><Calendar size={15} />{t("col.schedule.btn")}</button>
             </div>
             {!DEMO_MODE && isEmailCh && cur && !cur.email && (
@@ -2385,7 +2397,7 @@ function DebtCollect() {
               <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.gold, display: "flex", alignItems: "center", gap: 6 }}><Info size={13} />{t("col.send.noPhone")}</div>
             )}
             {!isEmailCh && cur && cur.phone && (
-              <div style={{ marginTop: 8, fontSize: 11, color: C_COL.sub, display: "flex", alignItems: "center", gap: 6 }}><Info size={12} />{copiedZalo ? t("col.assist.copied") : t("col.assist.hint")}</div>
+              <div style={{ marginTop: 8, fontSize: 11, color: isOpened ? C_COL.gold : C_COL.sub, display: "flex", alignItems: "center", gap: 6 }}><Info size={12} />{copiedZalo ? t("col.assist.copied") : isOpened ? t("col.assist.opened") : t("col.assist.hint")}</div>
             )}
             {sendErr && (
               <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.red, display: "flex", alignItems: "flex-start", gap: 6 }}><AlertTriangle size={13} style={{ flex: "0 0 auto", marginTop: 1 }} />{sendErr}</div>
