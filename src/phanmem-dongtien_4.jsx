@@ -12,7 +12,7 @@ import { loadAccounts, accountName } from "./lib/accounts";
 import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines, setReceivableStatus } from "./lib/cashflow";
 import { fetchTransactions } from "./lib/transactions";
-import { fetchForecast, sendReminder } from "./lib/forecastApi";
+import { fetchForecast, sendReminder, getEmailDomain, setupEmailDomain, verifyEmailDomain } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
 import { useCompany } from "./CompanyContext";
@@ -1836,6 +1836,112 @@ function demoReconcileMatches() {
   ].filter(Boolean);
 }
 
+/* Thẻ cấu hình domain gửi email theo công ty (option B). Chỉ hiện ở bản chính, có company. */
+function EmailDomainCard() {
+  const { t } = useT();
+  const { company } = useCompany();
+  const [dom, setDom] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState("");
+  const [fromName, setFromName] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState("");
+
+  useEffect(() => {
+    if (DEMO_MODE || !company?.id) { setLoading(false); return; }
+    let alive = true;
+    getEmailDomain(company.id).then((d) => { if (alive) { setDom(d); setLoading(false); } }).catch(() => { if (alive) { setDom(null); setLoading(false); } });
+    return () => { alive = false; };
+  }, [company?.id]);
+
+  if (DEMO_MODE || !company?.id || loading) return null;
+
+  const status = dom?.status || "none";
+  const verified = status === "verified";
+  const records = dom?.records || [];
+
+  const doSetup = async () => {
+    const d = input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    if (!d || !d.includes(".")) { setErr(t("col.dom.badDomain")); return; }
+    setBusy("setup"); setErr("");
+    try { const r = await setupEmailDomain(company.id, d, fromName.trim()); setDom(r); setEditing(false); }
+    catch (e) { setErr(e?.message || "Lỗi"); }
+    finally { setBusy(""); }
+  };
+  const doVerify = async () => {
+    setBusy("verify"); setErr("");
+    try { const r = await verifyEmailDomain(company.id); setDom((p) => ({ ...(p || {}), ...r })); }
+    catch (e) { setErr(e?.message || "Lỗi"); }
+    finally { setBusy(""); }
+  };
+  const copy = (val, key) => { try { navigator.clipboard.writeText(val); setCopied(key); setTimeout(() => setCopied(""), 1200); } catch { /* ignore */ } };
+
+  if (verified && !editing) {
+    return (
+      <div style={{ ...panelCol, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "12px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+          <ShieldCheck size={16} color={C_COL.green} />
+          <span style={{ fontSize: 12.5 }}>{t("col.dom.verified")} <b className="tnum" style={{ color: C_COL.green }}>no-reply@{dom.domain}</b></span>
+        </div>
+        <button className="btn" onClick={() => { setEditing(true); setInput(dom.domain || ""); }} style={{ fontSize: 11.5, color: C_COL.sub, background: "transparent", border: `1px solid ${C_COL.line}`, borderRadius: 8, padding: "5px 10px" }}>{t("col.dom.change")}</button>
+      </div>
+    );
+  }
+
+  const showForm = status === "none" || editing;
+  return (
+    <section className="card" style={{ ...panelCol, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <Send size={16} color={C_COL.cyan} /><h3 style={h3Col}>{t("col.dom.title")}</h3>
+        {status !== "none" && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, color: verified ? C_COL.green : C_COL.gold, background: (verified ? C_COL.green : C_COL.gold) + "22" }}>{verified ? t("col.dom.st.verified") : t("col.dom.st.pending")}</span>}
+      </div>
+      <div style={{ fontSize: 11.8, color: C_COL.sub, marginBottom: 12, lineHeight: 1.5 }}>{t("col.dom.desc")}</div>
+
+      {showForm ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t("col.dom.inputPh")} style={{ flex: "1 1 200px", minWidth: 0, padding: "9px 11px", borderRadius: 9, background: C_COL.panel2, border: `1px solid ${C_COL.line}`, color: C_COL.txt, fontSize: 13, fontFamily: "inherit" }} />
+          <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder={t("col.dom.fromPh")} style={{ flex: "1 1 160px", minWidth: 0, padding: "9px 11px", borderRadius: 9, background: C_COL.panel2, border: `1px solid ${C_COL.line}`, color: C_COL.txt, fontSize: 13, fontFamily: "inherit" }} />
+          <button className="btn" onClick={doSetup} disabled={busy === "setup"} style={{ padding: "9px 16px", borderRadius: 9, fontWeight: 700, fontSize: 12.5, color: "#08130d", background: C_COL.cyan, opacity: busy === "setup" ? 0.7 : 1 }}>{busy === "setup" ? t("col.dom.registering") : t("col.dom.register")}</button>
+          {editing && <button className="btn" onClick={() => { setEditing(false); setErr(""); }} style={{ padding: "9px 12px", borderRadius: 9, fontSize: 12.5, color: C_COL.sub, background: "transparent", border: `1px solid ${C_COL.line}` }}>{t("col.dom.cancel")}</button>}
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: C_COL.txt, marginBottom: 10, lineHeight: 1.5 }}>{t("col.dom.dnsIntro", { domain: dom.domain })}</div>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 460 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "64px 150px 1fr 96px", gap: 8, fontSize: 10.5, fontWeight: 800, color: C_COL.sub, padding: "0 2px 6px" }}>
+                <span>{t("col.dom.th.type")}</span><span>{t("col.dom.th.host")}</span><span>{t("col.dom.th.value")}</span><span />
+              </div>
+              {records.map((r, i) => {
+                const rs = r.status === "verified";
+                return (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "64px 150px 1fr 96px", gap: 8, alignItems: "center", padding: "8px 2px", borderTop: `1px solid ${C_COL.line2}` }}>
+                    <span className="tnum" style={{ fontSize: 11, fontWeight: 700 }}>{r.type}{r.priority ? ` (${r.priority})` : ""}</span>
+                    <span className="tnum" style={{ fontSize: 11, wordBreak: "break-all" }}>{r.name}</span>
+                    <span className="tnum" style={{ fontSize: 10.5, color: C_COL.sub, wordBreak: "break-all" }}>{r.value}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end" }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: rs ? C_COL.green : C_COL.gold }}>{rs ? "✓" : "…"}</span>
+                      <button className="btn" onClick={() => copy(r.value, i)} title={t("col.dom.copy")} style={{ fontSize: 10, color: C_COL.cyan, background: C_COL.cyanSoft, border: "none", borderRadius: 6, padding: "3px 7px" }}>{copied === i ? "✓" : t("col.dom.copy")}</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 9, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <button className="btn" onClick={doVerify} disabled={busy === "verify"} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, fontWeight: 700, fontSize: 12.5, color: "#2a1500", background: C_COL.gold, opacity: busy === "verify" ? 0.7 : 1 }}><RefreshCw size={13} />{busy === "verify" ? t("col.dom.verifying") : t("col.dom.verify")}</button>
+            <button className="btn" onClick={() => { setEditing(true); setInput(dom.domain || ""); }} style={{ fontSize: 12, color: C_COL.sub, background: "transparent", border: `1px solid ${C_COL.line}`, borderRadius: 9, padding: "9px 12px" }}>{t("col.dom.change")}</button>
+            <span style={{ fontSize: 11, color: C_COL.sub }}>{t("col.dom.pending")}</span>
+          </div>
+        </>
+      )}
+      {err && <div style={{ marginTop: 10, fontSize: 11.5, color: C_COL.red, display: "flex", gap: 6, alignItems: "flex-start" }}><AlertTriangle size={13} style={{ flex: "0 0 auto", marginTop: 1 }} />{err}</div>}
+    </section>
+  );
+}
+
 function DebtCollect() {
   const { t } = useT();
   const { company } = useCompany();
@@ -1941,6 +2047,9 @@ function DebtCollect() {
           </div>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: C_COL.violet, background: C_COL.violetSoft, padding: "7px 13px", borderRadius: 20 }}><Sparkles size={13} />{t("col.badge")}</span>
         </header>
+
+        {/* Cấu hình domain gửi email (option B) — chỉ bản chính */}
+        <EmailDomainCard />
 
         {/* ===== DASHBOARD CÔNG NỢ + TUỔI NỢ ===== */}
         {ar.hasAny && (

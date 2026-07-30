@@ -52,3 +52,33 @@ export async function sendReminder(payload) {
   }
   return res.json();
 }
+
+/* ---- Domain gửi email theo công ty (option B) ---- */
+async function svcFetch(path, { method = "GET", body } = {}) {
+  if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error("Chưa đăng nhập");
+  let res;
+  try {
+    res = await fetch(`${FORECAST_URL}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    throw new Error("Không kết nối được dịch vụ");
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Lỗi ${res.status}${t ? ": " + t.slice(0, 160) : ""}`);
+  }
+  return res.json();
+}
+
+export const getEmailDomain = (companyId) =>
+  svcFetch(`/email-domain?company_id=${encodeURIComponent(companyId)}`);
+export const setupEmailDomain = (companyId, domain, fromName) =>
+  svcFetch(`/email-domain`, { method: "POST", body: { company_id: companyId, domain, from_name: fromName || undefined } });
+export const verifyEmailDomain = (companyId) =>
+  svcFetch(`/email-domain/verify`, { method: "POST", body: { company_id: companyId } });

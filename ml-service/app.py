@@ -339,7 +339,15 @@ def email_domain_setup(req: EmailDomainReq, user_id: str = Depends(require_user)
     if c.get("email_domain_id") and c.get("email_domain") == domain:
         dom = _resend_api("GET", f"/domains/{c['email_domain_id']}")      # đã đăng ký → lấy lại records
     else:
-        dom = _resend_api("POST", "/domains", {"name": domain})           # đăng ký mới
+        try:
+            dom = _resend_api("POST", "/domains", {"name": domain})       # đăng ký mới
+        except HTTPException:
+            # domain có thể đã tồn tại trên tài khoản Resend → tìm lại theo tên rồi lấy chi tiết
+            lst = _resend_api("GET", "/domains")
+            existing = next((d for d in (lst.get("data") or []) if d.get("name") == domain), None)
+            if not existing:
+                raise
+            dom = _resend_api("GET", f"/domains/{existing['id']}")
     _patch_company(req.company_id, {
         "email_domain": domain, "email_domain_id": dom.get("id"),
         "email_domain_status": _norm_status(dom.get("status")),
