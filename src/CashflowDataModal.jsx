@@ -20,7 +20,7 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
   const [err, setErr] = useState("");
   const [opening, setOpening] = useState(data?.openingCash ?? 0);
   const [savingOpen, setSavingOpen] = useState(false);
-  const [rForm, setRForm] = useState({ customer: "", amount: "", dueDate: "", email: "" });
+  const [rForm, setRForm] = useState({ customer: "", amount: "", dueDate: "", email: "", phone: "" });
   const [pForm, setPForm] = useState({ label: "", amount: "", dueDate: "", category: "supplier" });
   const CATS = ["supplier", "payroll", "tax", "other"];
 
@@ -45,8 +45,8 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
   const addR = () => {
     if (!rForm.customer.trim() || !rForm.amount || !rForm.dueDate) { setErr(t("cf.data.err.fill")); return; }
     run(async () => {
-      await addReceivable(companyId, { customer: rForm.customer.trim(), amount: Number(rForm.amount) || 0, dueDate: rForm.dueDate, customerEmail: rForm.email.trim() });
-      setRForm({ customer: "", amount: "", dueDate: "", email: "" });
+      await addReceivable(companyId, { customer: rForm.customer.trim(), amount: Number(rForm.amount) || 0, dueDate: rForm.dueDate, customerEmail: rForm.email.trim(), customerPhone: rForm.phone.trim() });
+      setRForm({ customer: "", amount: "", dueDate: "", email: "", phone: "" });
     });
   };
 
@@ -75,9 +75,12 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
         <div className="tnum" style={{ fontSize: 12, fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fmtAmt(item.amount)}</div>
         {/* Hạn */}
         <div className="tnum" style={{ fontSize: 11.5, color: C.sub, whiteSpace: "nowrap" }}>{item.dueDate}</div>
-        {/* Cột 4: email khách (Phải thu) | loại chi (Phải chi) */}
+        {/* Cột 4: liên hệ khách — email + SĐT (Phải thu) | loại chi (Phải chi) */}
         {isRecv
-          ? <div title={item.customerEmail || ""} style={{ minWidth: 0, fontSize: 11, color: item.customerEmail ? C.sub : C.line, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.customerEmail || "—"}</div>
+          ? <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1, lineHeight: 1.3 }}>
+              <span title={item.customerEmail || ""} style={{ fontSize: 11, color: item.customerEmail ? C.sub : C.line, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.customerEmail || "—"}</span>
+              {item.customerPhone && <span className="tnum" style={{ fontSize: 10.5, color: C.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.customerPhone}</span>}
+            </div>
           : <div style={{ minWidth: 0 }}><span style={{ display: "inline-block", maxWidth: "100%", fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, color: C.gold, background: C.gold + "1c", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "middle" }}>{t("cf.cat." + (item.category || "other"))}</span></div>}
         {/* Hành động (canh dưới nút + Thêm) */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
@@ -126,8 +129,11 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
           <input style={inp} placeholder={t("cf.data.customer")} value={rForm.customer} onChange={(e) => setRForm({ ...rForm, customer: e.target.value })} />
           <input className="tnum" style={inp} type="number" min="0" placeholder={t("cf.data.amount", { cur: moneySymbol(currency) })} value={rForm.amount} onChange={(e) => setRForm({ ...rForm, amount: e.target.value })} />
           <input className="tnum" style={inp} type="date" value={rForm.dueDate} onChange={(e) => setRForm({ ...rForm, dueDate: e.target.value })} />
-          <input style={inp} type="email" placeholder={t("cf.data.email")} value={rForm.email} onChange={(e) => setRForm({ ...rForm, email: e.target.value })} />
-          <button onClick={addR} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 9, border: `1px dashed ${C.green}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, color: C.green, background: "transparent", fontFamily: "inherit" }}><Plus size={13} />{t("cf.data.add")}</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+            <input style={inp} type="email" placeholder={t("cf.data.email")} value={rForm.email} onChange={(e) => setRForm({ ...rForm, email: e.target.value })} />
+            <input className="tnum" style={inp} type="tel" placeholder={t("cf.data.phone")} value={rForm.phone} onChange={(e) => setRForm({ ...rForm, phone: e.target.value })} />
+          </div>
+          <button onClick={addR} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 9, border: `1px dashed ${C.green}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, color: C.green, background: "transparent", fontFamily: "inherit", alignSelf: "start" }}><Plus size={13} />{t("cf.data.add")}</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 22 }}>
           {receivables.length === 0 && <div style={{ fontSize: 12, color: C.sub, padding: "6px 2px" }}>{t("cf.data.recv.empty")}</div>}

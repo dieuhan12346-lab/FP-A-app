@@ -1639,12 +1639,13 @@ function buildCollectionsReal(cfData) {
     const days = daysOverdue(r.dueDate, today);
     if (days <= 0) continue; // chỉ khoản đã quá hạn
     const key = String(r.customer || "—").trim().toLowerCase();
-    if (!groups[key]) groups[key] = { name: r.customer, invoices: [], amount: 0, days: 0, email: "" };
+    if (!groups[key]) groups[key] = { name: r.customer, invoices: [], amount: 0, days: 0, email: "", phone: "" };
     const g = groups[key];
     g.invoices.push({ code: r.invoiceNo ? `HĐ ${r.invoiceNo}` : "—", amount: (Number(r.amount) || 0) / 1e6, days, dueDate: r.dueDate });
     g.amount += (Number(r.amount) || 0) / 1e6;
     if (days > g.days) g.days = days;                  // hạn xa nhất quyết định giọng văn
     if (!g.email && r.customerEmail) g.email = r.customerEmail;
+    if (!g.phone && r.customerPhone) g.phone = r.customerPhone;
   }
   return Object.entries(groups).map(([key, g]) => {
     const invoices = g.invoices.sort((a, b) => b.days - a.days);
@@ -1656,6 +1657,7 @@ function buildCollectionsReal(cfData) {
       days: g.days,
       onTime: 0.85,                     // chưa có lịch sử trả
       email: g.email,
+      phone: g.phone,
       invoices,
       code: invoices[0] ? invoices[0].code : "—",
     };
@@ -1977,6 +1979,7 @@ function DebtCollect() {
       ...r,
       invoices: r.invoices && r.invoices.length ? r.invoices : [{ code: r.code, amount: r.amount, days: r.days, dueDate: null }],
       email: r.email || (DEMO_MODE ? `kt.${r.id}@demo.vn` : ""),
+      phone: r.phone || (DEMO_MODE ? "0901234567" : ""),
       p: recoverP_COL(r), tier: tierCol(r.days),
     })).sort((a, b) => b.days - a.days);
   }, [cfData]);
@@ -2068,6 +2071,30 @@ function DebtCollect() {
       setSending(false);
     }
   };
+
+  // Gửi hỗ trợ (mô hình A, miễn phí): mở sẵn app SMS/Zalo/WhatsApp với tin đã soạn, người dùng bấm Gửi.
+  const [copiedZalo, setCopiedZalo] = useState(false);
+  const openAssisted = () => {
+    if (!cur) return;
+    setSendErr("");
+    const phone = (cur.phone || "").replace(/[^\d+]/g, "");
+    const body = msg?.body || "";
+    if (channel === "sms") {
+      window.open(`sms:${phone}?&body=${encodeURIComponent(body)}`, "_blank");
+    } else { // zalo (VN) hoặc WhatsApp (ngoài VN)
+      if (!isVnCompany) {
+        const wa = phone.replace(/\D/g, "");                 // wa.me: số quốc tế chỉ chữ số
+        window.open(`https://wa.me/${wa}?text=${encodeURIComponent(body)}`, "_blank");
+      } else {
+        try { navigator.clipboard.writeText(body); setCopiedZalo(true); setTimeout(() => setCopiedZalo(false), 2500); } catch { /* ignore */ }
+        window.open(`https://zalo.me/${phone.replace(/\D/g, "")}`, "_blank"); // Zalo không cho chèn sẵn text → đã chép để dán
+      }
+    }
+    markSent();
+  };
+  const isEmailCh = channel === "email";
+  const hasContact = isEmailCh ? !!cur?.email : !!cur?.phone;   // email cần email; sms/zalo cần SĐT
+  const onSendClick = () => (isEmailCh ? doSend() : openAssisted());
 
   return (
     <div style={{ fontFamily: UI_COL, color: C_COL.txt }}>
@@ -2342,15 +2369,23 @@ function DebtCollect() {
             </div>
 
             <div style={{ display: "flex", gap: 9, marginTop: 12, flexWrap: "wrap" }}>
-              <button className="btn" onClick={doSend} disabled={sending} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, opacity: sending ? 0.7 : 1, cursor: sending ? "default" : "pointer", color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
+              {(() => { const blocked = sending || (!isEmailCh && !hasContact); return (
+              <button className="btn" onClick={onSendClick} disabled={blocked} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, opacity: blocked ? 0.6 : 1, cursor: blocked ? "default" : "pointer", color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
                 {sending ? <><Send size={15} />{t("col.send.sending")}</>
                   : isSent ? <><CheckCircle2 size={15} />{t("col.sent", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>
-                  : <><Send size={15} />{canRealEmail ? t("col.send.real") : t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })}</>}
+                  : <><Send size={15} />{isEmailCh ? (canRealEmail ? t("col.send.real") : t("col.send", { ch: chName(CHANNELS_COL.find((c) => c.id === channel)) })) : (channel === "sms" ? t("col.assist.sms") : (isVnCompany ? t("col.assist.zalo") : t("col.assist.wa")))}</>}
               </button>
+              ); })()}
               <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, fontWeight: 700, fontSize: 13, color: C_COL.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_COL.line}` }}><Calendar size={15} />{t("col.schedule.btn")}</button>
             </div>
-            {!DEMO_MODE && channel === "email" && cur && !cur.email && (
+            {!DEMO_MODE && isEmailCh && cur && !cur.email && (
               <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.gold, display: "flex", alignItems: "center", gap: 6 }}><Info size={13} />{t("col.send.noEmail")}</div>
+            )}
+            {!isEmailCh && cur && !cur.phone && (
+              <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.gold, display: "flex", alignItems: "center", gap: 6 }}><Info size={13} />{t("col.send.noPhone")}</div>
+            )}
+            {!isEmailCh && cur && cur.phone && (
+              <div style={{ marginTop: 8, fontSize: 11, color: C_COL.sub, display: "flex", alignItems: "center", gap: 6 }}><Info size={12} />{copiedZalo ? t("col.assist.copied") : t("col.assist.hint")}</div>
             )}
             {sendErr && (
               <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.red, display: "flex", alignItems: "flex-start", gap: 6 }}><AlertTriangle size={13} style={{ flex: "0 0 auto", marginTop: 1 }} />{sendErr}</div>
