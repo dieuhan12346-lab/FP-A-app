@@ -35,13 +35,15 @@ export async function sendReminder(payload) {
   if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
+  const userEmail = data?.session?.user?.email;
   if (!token) throw new Error("Chưa đăng nhập");
   let res;
   try {
     res = await fetch(`${FORECAST_URL}/send-reminder`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
+      // Reply-To mặc định = email người gửi (mô hình C); payload có thể ghi đè.
+      body: JSON.stringify({ reply_to: userEmail || undefined, ...payload }),
     });
   } catch (e) {
     throw new Error("Không kết nối được dịch vụ gửi email");

@@ -68,6 +68,7 @@ class SendReminderReq(BaseModel):
     invoice_codes: str | None = None
     tier: str | None = None       # gentle | firm | urgent
     footer: str | None = None     # dòng chân thư (đã bản địa hoá ở app); có mặc định nếu trống
+    reply_to: str | None = None   # Reply-To: nơi nhận phản hồi của khách (mô hình C: email người gửi/công ty)
 
 
 class EmailDomainReq(BaseModel):
@@ -259,13 +260,28 @@ def _patch_company(company_id: str, fields: dict) -> None:
         pass
 
 
+def _reminder_addr() -> str:
+    """Địa chỉ email trong REMINDER_FROM (vd no-reply@luxorasystem.com)."""
+    import re
+    m = re.search(r"<([^>]+)>", REMINDER_FROM)
+    return (m.group(1) if m else REMINDER_FROM).strip()
+
+
+def _from_hdr(name: str | None, addr: str) -> str:
+    """Ghép header From an toàn: bọc tên hiển thị trong dấu nháy (tránh vỡ header khi tên có dấu phẩy)."""
+    n = (name or "").replace('"', "").strip()
+    return f'"{n}" <{addr}>' if n else addr
+
+
 def _from_for(company_id: str) -> str:
-    """Địa chỉ gửi theo TỪNG công ty (option B): domain đã verify → no-reply@domain; chưa có → REMINDER_FROM."""
+    """Người gửi theo từng công ty:
+       - Có domain riêng đã verify (option B) → no-reply@<domain của công ty>.
+       - Chưa có (mô hình C) → gửi từ domain Luxora nhưng HIỆN TÊN CÔNG TY ở phần người gửi."""
     c = _company_email_config(company_id)
     if c.get("email_domain") and c.get("email_domain_status") == "verified":
-        name = c.get("email_from_name") or c.get("name") or "Luxora"
-        return f"{name} <no-reply@{c['email_domain']}>"
-    return REMINDER_FROM
+        return _from_hdr(c.get("email_from_name") or c.get("name") or "Luxora", f"no-reply@{c['email_domain']}")
+    name = c.get("email_from_name") or c.get("name")
+    return _from_hdr(name, _reminder_addr()) if name else REMINDER_FROM
 
 
 def _log_reminder(req: "SendReminderReq", user_id: str, status: str, provider_id: str | None, error: str | None) -> None:
@@ -299,15 +315,18 @@ def send_reminder(req: SendReminderReq, user_id: str = Depends(require_user)):
     if "@" not in to or " " in to:
         raise HTTPException(400, "Email người nhận không hợp lệ")
     import httpx
+    _payload = {
+        "from": _from_for(req.company_id), "to": [to],
+        "subject": req.subject or "Nhắc thanh toán công nợ",
+        "text": req.body, "html": _reminder_html(req.body, req.footer),
+    }
+    if req.reply_to and "@" in req.reply_to:
+        _payload["reply_to"] = req.reply_to.strip()
     try:
         r = httpx.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "from": _from_for(req.company_id), "to": [to],
-                "subject": req.subject or "Nhắc thanh toán công nợ",
-                "text": req.body, "html": _reminder_html(req.body, req.footer),
-            },
+            json=_payload,
             timeout=30,
         )
     except httpx.HTTPError as e:
