@@ -1625,6 +1625,8 @@ function tierCol(days) {
   if (days >= 25) return { key: "firm", labelKey: "col.tier.firm", c: C_COL.orange, soft: C_COL.orangeSoft };
   return { key: "gentle", labelKey: "col.tier.gentle", c: C_COL.gold, soft: C_COL.goldSoft };
 }
+/* Chuẩn hoá tên khách để đối chiếu với reminder_log (bậc nào đã gửi cho ai). */
+const normName = (s) => String(s || "").trim().toLowerCase();
 
 /* Danh sách nhắc nợ THẬT: công nợ phải thu QUÁ HẠN (dueDate < hôm nay, chưa trả).
    Đưa về đúng shape debtor mà UI + draftCol dùng. amount → TRIỆU. */
@@ -1974,6 +1976,7 @@ function DebtCollect() {
     return base.map((r) => ({
       ...r,
       invoices: r.invoices && r.invoices.length ? r.invoices : [{ code: r.code, amount: r.amount, days: r.days, dueDate: null }],
+      email: r.email || (DEMO_MODE ? `kt.${r.id}@demo.vn` : ""),
       p: recoverP_COL(r), tier: tierCol(r.days),
     })).sort((a, b) => b.days - a.days);
   }, [cfData]);
@@ -1992,6 +1995,48 @@ function DebtCollect() {
         .catch(() => setReconciled((s) => { const n = new Set(s); n.delete(m.receivable.id); return n; })); // lỗi → bỏ đánh dấu
     }
   };
+
+  // ===== 2c — Nhắc theo lịch: 1 email/mức độ, leo thang theo ngày quá hạn, dừng sau bậc khẩn =====
+  const [sentPairs, setSentPairs] = useState(() => new Set()); // "tên_khách:tier" đã gửi thành công (từ reminder_log)
+  const [deselected, setDeselected] = useState(() => new Set()); // khách bị bỏ chọn khỏi lô hôm nay
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchMsg, setBatchMsg] = useState("");
+  useEffect(() => {
+    if (DEMO_MODE || !company?.id || !supabase) { setSentPairs(new Set()); return; }
+    supabase.from("reminder_log").select("customer,tier,status").eq("company_id", company.id).then(({ data }) => {
+      const s = new Set();
+      (data || []).forEach((r) => { if (r.status === "sent" && r.customer) s.add(normName(r.customer) + ":" + (r.tier || "")); });
+      setSentPairs(s);
+    });
+  }, [company?.id]);
+  const schedule = useMemo(() => {
+    const key = (d) => normName(d.name) + ":" + d.tier.key;
+    const withEmail = debtors.filter((d) => d.email);
+    return {
+      due: withEmail.filter((d) => !sentPairs.has(key(d))),      // bậc hiện tại CHƯA gửi → cần nhắc hôm nay
+      waiting: withEmail.filter((d) => sentPairs.has(key(d))).length, // đã nhắc bậc này → chờ phản hồi
+      noEmail: debtors.length - withEmail.length,
+    };
+  }, [debtors, sentPairs]);
+  const sendBatch = async () => {
+    const items = schedule.due.filter((d) => !deselected.has(d.id));
+    if (!items.length) return;
+    setBatchBusy(true); setBatchMsg("");
+    let ok = 0, fail = 0;
+    for (const d of items) {
+      const m = draftCol(d, "email", currency, !isVnCompany);
+      try {
+        if (!DEMO_MODE) {
+          await sendReminder({ company_id: company.id, to: d.email, subject: m.subject || "", body: m.body || "", receivable_id: String(d.id), customer: d.name, invoice_codes: (d.invoices || []).map((iv) => iv.code).join(", "), tier: d.tier.key, footer: t("col.send.footer") });
+        }
+        setSentPairs((p) => new Set(p).add(normName(d.name) + ":" + d.tier.key)); // gửi xong → rời khỏi lô, chống trùng
+        ok++;
+      } catch (e) { fail++; }
+    }
+    setBatchBusy(false);
+    setBatchMsg(t("col.sch.result", { ok, fail }));
+  };
+
   const [sel, setSel] = useState(null);
   useEffect(() => { setSel((s) => (debtors.find((r) => r.id === s) ? s : debtors[0]?.id || null)); }, [debtors]);
   const cur = debtors.find((r) => r.id === sel);
@@ -2150,6 +2195,53 @@ function DebtCollect() {
                 );
               })}
             </div>
+          </section>
+        )}
+
+        {/* ===== NHẮC THEO LỊCH (2c — duyệt trước khi gửi) ===== */}
+        {debtors.length > 0 && (
+          <section className="card" style={{ ...panelCol, marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+              <Calendar size={16} color={C_COL.gold} />
+              <h3 style={h3Col}>{t("col.sch.title")}</h3>
+              {schedule.due.length > 0 && <span className="tnum" style={{ fontSize: 11, fontWeight: 800, color: C_COL.gold, background: C_COL.goldSoft, padding: "2px 8px", borderRadius: 20 }}>{schedule.due.length}</span>}
+              <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: C_COL.cyan, background: C_COL.cyanSoft, padding: "3px 9px", borderRadius: 20 }}>{t("col.sch.mode")}</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: C_COL.sub, marginBottom: 12, lineHeight: 1.5 }}>{t("col.sch.desc")}</div>
+            {schedule.due.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: C_COL.sub, padding: "6px 2px" }}>{t("col.sch.empty")}</div>
+            ) : (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {schedule.due.map((d) => {
+                    const on = !deselected.has(d.id);
+                    return (
+                      <label key={d.id} style={{ display: "grid", gridTemplateColumns: "20px minmax(0,1fr) auto auto", gap: 10, alignItems: "center", padding: "9px 12px", borderRadius: 10, background: C_COL.panel2, border: `1px solid ${C_COL.line}`, cursor: "pointer" }}>
+                        <input type="checkbox" checked={on} onChange={() => setDeselected((s) => { const n = new Set(s); if (on) n.add(d.id); else n.delete(d.id); return n; })} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</div>
+                          <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.email} · {t("col.overdue", { d: d.days })}</div>
+                        </div>
+                        <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap" }}>{fmtTr_COL(d.amount)}</span>
+                        <span style={{ fontSize: 9.5, fontWeight: 800, color: d.tier.c, background: d.tier.soft, padding: "2px 7px", borderRadius: 5, whiteSpace: "nowrap" }}>{t(d.tier.labelKey)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <button className="btn" onClick={sendBatch} disabled={batchBusy} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#2a1500", background: `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, opacity: batchBusy ? 0.7 : 1 }}>
+                    <Send size={14} />{batchBusy ? t("col.sch.sending") : t("col.sch.sendAll", { n: schedule.due.filter((d) => !deselected.has(d.id)).length })}
+                  </button>
+                  {batchMsg && <span style={{ fontSize: 12, color: C_COL.green, fontWeight: 700 }}>{batchMsg}</span>}
+                </div>
+              </>
+            )}
+            {(schedule.waiting > 0 || schedule.noEmail > 0) && (
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C_COL.line}`, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 11, color: C_COL.sub }}>
+                {schedule.waiting > 0 && <span><b style={{ color: C_COL.txt }}>{schedule.waiting}</b> {t("col.sch.waiting")}</span>}
+                {schedule.noEmail > 0 && <span><AlertTriangle size={11} style={{ verticalAlign: "-1px" }} /> <b style={{ color: C_COL.gold }}>{schedule.noEmail}</b> {t("col.sch.noEmail")}</span>}
+              </div>
+            )}
           </section>
         )}
 
