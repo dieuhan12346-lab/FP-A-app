@@ -3620,7 +3620,7 @@ const NAV = [
   { id: "fpa", key: "fpa", icon: Brain, c: C.cyan },
   { id: "ops", key: "ops", icon: Bot, c: C.green, demo: true },
   { id: "credit", key: "credit", icon: Gauge, c: C.violet, demo: true },
-  { id: "collect", key: "collect", icon: Bell, c: C.orange, demo: true },
+  { id: "collect", key: "collect", icon: Bell, c: C.orange },
   { id: "invoice", key: "invoice", icon: Receipt, c: C.green },
   { id: "pricing", key: "pricing", icon: TagIcon, c: C.cyan },
 ];
