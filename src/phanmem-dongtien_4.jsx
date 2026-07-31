@@ -2630,22 +2630,29 @@ function CreditScore() {
   };
   const bctcFileRef = useRef(null);
   const [impMsg, setImpMsg] = useState("");
-  const importBCTC = async (file) => {
-    if (!file) return;
+  // Nhận NHIỀU file cùng lúc (CĐKT + KQKD + LCTT) — mỗi file điền phần của nó, cộng dồn.
+  const importBCTC = async (files) => {
+    const list = Array.from(files || []);
+    if (!list.length) return;
     setImpMsg("");
-    try {
-      const buf = await file.arrayBuffer();
-      const { values, periods, ttm, cum } = parseBCTC(buf);
-      const keys = Object.keys(values);
-      if (!keys.length) { setImpMsg(t("cr.imp.none")); return; }
-      setEditF((prev) => ({ ...prev, financials: { ...(prev?.financials || {}), ...values } }));
-      // Nhiều kỳ → số thời điểm lấy kỳ mới nhất; số phát sinh cộng 4 quý (TTM) để so được với nhau.
-      const per = periods.length ? periods[periods.length - 1].label : "";
-      setImpMsg(cum ? t("cr.imp.okCum", { n: keys.length, period: per })
-        : ttm ? t("cr.imp.okTTM", { n: keys.length, period: per })
-        : per ? t("cr.imp.okPeriod", { n: keys.length, period: per })
-        : t("cr.imp.ok", { n: keys.length }));
-    } catch (e) { setImpMsg(t("cr.imp.err")); }
+    const merged = {}; let per = "", ttm = false, cum = false, failed = 0;
+    for (const file of list) {
+      try {
+        const r = parseBCTC(await file.arrayBuffer());
+        Object.assign(merged, r.values);
+        if (r.periods.length) per = r.periods[r.periods.length - 1].label;
+        if (r.ttm) ttm = true;
+        if (r.cum) cum = true;
+      } catch { failed++; }
+    }
+    const keys = Object.keys(merged);
+    if (!keys.length) { setImpMsg(failed ? t("cr.imp.err") : t("cr.imp.none")); return; }
+    setEditF((prev) => ({ ...prev, financials: { ...(prev?.financials || {}), ...merged } }));
+    // Nhiều kỳ → số thời điểm lấy kỳ mới nhất; số phát sinh quy về năm để so được với nhau.
+    setImpMsg(cum ? t("cr.imp.okCum", { n: keys.length, period: per })
+      : ttm ? t("cr.imp.okTTM", { n: keys.length, period: per })
+      : per ? t("cr.imp.okPeriod", { n: keys.length, period: per })
+      : t("cr.imp.ok", { n: keys.length }));
   };
 
   const score = sel ? scoreReal_CR(sel.f, FLIST) : 0;
@@ -2742,7 +2749,7 @@ function CreditScore() {
                 <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>{t("cr.editf.title")}</div>
                 <div style={{ fontSize: 11, color: C_CR.sub, marginBottom: 10, lineHeight: 1.5 }}>{t("cr.editf.desc")}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 13 }}>
-                  <input ref={bctcFileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => { importBCTC(e.target.files[0]); e.target.value = ""; }} />
+                  <input ref={bctcFileRef} type="file" accept=".xlsx,.xls" multiple style={{ display: "none" }} onChange={(e) => { importBCTC(e.target.files); e.target.value = ""; }} />
                   <button className="btn" onClick={() => bctcFileRef.current?.click()} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, fontWeight: 700, fontSize: 12, color: C_CR.cyan, background: C_CR.cyanSoft, border: `1px solid ${C_CR.cyan}44` }}><FileSpreadsheet size={14} />{t("cr.imp.btn")}</button>
                   {impMsg && <span style={{ fontSize: 11.5, color: C_CR.sub }}>{impMsg}</span>}
                 </div>

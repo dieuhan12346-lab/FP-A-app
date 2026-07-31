@@ -561,7 +561,7 @@
   "cr.src.real": "real data",
   "cr.src.manual": "manual",
   "cr.src.bctc": "from statements",
-  "cr.imp.btn": "Import Excel",
+  "cr.imp.btn": "Import Excel (multiple files OK)",
   "cr.imp.ok": "Read {n} items — review, then Save.",
   "cr.imp.okPeriod": "Read {n} items (period {period}) — review, then Save.",
   "cr.imp.okTTM": "Read {n} items — flow figures summed over the last 4 quarters (through {period}); balance figures as of {period}. Review, then Save.",

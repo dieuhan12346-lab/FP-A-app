@@ -561,7 +561,7 @@
   "cr.src.real": "công nợ thật",
   "cr.src.manual": "nhập tay",
   "cr.src.bctc": "từ BCTC",
-  "cr.imp.btn": "Import Excel BCTC",
+  "cr.imp.btn": "Import Excel BCTC (chọn được nhiều file)",
   "cr.imp.ok": "Đã đọc {n} chỉ tiêu — soát lại rồi Lưu.",
   "cr.imp.okPeriod": "Đã đọc {n} chỉ tiêu (kỳ {period}) — soát lại rồi Lưu.",
   "cr.imp.okTTM": "Đã đọc {n} chỉ tiêu — số phát sinh cộng 4 quý gần nhất (đến {period}), số thời điểm lấy {period}. Soát lại rồi Lưu.",
