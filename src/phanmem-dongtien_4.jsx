@@ -12,6 +12,7 @@ import { loadAccounts, accountName } from "./lib/accounts";
 import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines, setReceivableStatus } from "./lib/cashflow";
 import { fetchTransactions } from "./lib/transactions";
+import { fetchCreditFactors, saveCreditFactors } from "./lib/credit";
 import { fetchForecast, sendReminder, getEmailDomain, setupEmailDomain, verifyEmailDomain } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
@@ -2469,6 +2470,56 @@ const FACTORS_CR = [
 ];
 
 const scoreOf_CR = (f) => Math.round(FACTORS_CR.reduce((s, x) => s + f[x.key] * x.w, 0));
+
+/* ---- Chấm điểm tín dụng THẬT (mô hình B): hành vi thanh toán auto từ công nợ + tài chính nhập tay ---- */
+const MANUAL_F_CR = ["liquidity", "leverage", "industry", "size"];
+/* Gộp công nợ theo khách → điểm hành vi thanh toán (payment) thật + trộn chỉ số nhập tay (factorsMap). */
+function buildCreditReal(cfData, factorsMap) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const groups = {};
+  for (const r of (cfData?.receivables || [])) {
+    const key = normName(r.customer);
+    if (!key) continue;
+    if (!groups[key]) groups[key] = { name: r.customer, total: 0, paid: 0, open: 0, overdue: 0, maxDays: 0, n: 0 };
+    const g = groups[key];
+    const amt = (Number(r.amount) || 0) / 1e6;
+    g.total += amt; g.n += 1;
+    if (r.status === "paid") g.paid += amt;
+    else {
+      g.open += amt;
+      const d = daysOverdue(r.dueDate, today);
+      if (d > 0) { g.overdue += amt; if (d > g.maxDays) g.maxDays = d; }
+    }
+  }
+  return Object.entries(groups).map(([key, g]) => {
+    const paidRatio = g.total > 0 ? g.paid / g.total : 0.5;
+    const overdueRatio = g.open > 0 ? g.overdue / g.open : 0;
+    const lateness = Math.min(g.maxDays, 90) / 90;
+    const payment = Math.max(5, Math.min(98, Math.round(55 + paidRatio * 35 - overdueRatio * 40 - lateness * 25)));
+    const m = factorsMap[key] || {};
+    const f = { payment };
+    for (const k of MANUAL_F_CR) if (m[k] != null && m[k] !== "") f[k] = Math.max(0, Math.min(100, Number(m[k])));
+    const avgInvoice = g.n > 0 ? g.total / g.n : 0;
+    return {
+      id: key, name: g.name, f,
+      requested: Number(m.requested) || 0,
+      industryKey: m.industry_key || "cr.ind.other",
+      pay: { total: g.total, paid: g.paid, open: g.open, overdue: g.overdue, maxDays: g.maxDays, n: g.n, paidRatio, overdueRatio, avgInvoice },
+      hasManual: MANUAL_F_CR.some((k) => f[k] != null),
+    };
+  }).sort((a, b) => b.pay.open - a.pay.open);
+}
+/* Điểm tổng: re-chuẩn hoá trọng số CHỈ trên yếu tố có dữ liệu (payment luôn có; tài chính nếu đã nhập). */
+function scoreReal_CR(f) {
+  let ws = 0, sum = 0;
+  for (const x of FACTORS_CR) if (f[x.key] != null) { ws += x.w; sum += f[x.key] * x.w; }
+  return ws > 0 ? Math.round(sum / ws) : 0;
+}
+function weakestReal_CR(f) {
+  const present = FACTORS_CR.map((x) => x.key).filter((k) => f[k] != null);
+  const k = present.sort((a, b) => f[a] - f[b])[0] || "payment";
+  return { liquidity: "cr.weak.liquidity", leverage: "cr.weak.leverage", payment: "cr.weak.payment", industry: "cr.weak.industry", size: "cr.weak.size" }[k];
+}
 function grade_CR(score) {
   if (score >= 80) return { g: "AA", c: C_CR.green, labelKey: "cr.grade.AA", Icon: ShieldCheck, ratio: 1.0 };
   if (score >= 68) return { g: "A", c: C_CR.cyan, labelKey: "cr.grade.A", Icon: ShieldCheck, ratio: 0.8 };
@@ -2485,9 +2536,22 @@ function CreditScore() {
   const fmtVnd_CR = (m) => fmtMoneyM(m, currency);
   const fmtTr_CR = (m) => fmtCompactM(m, currency);
   const fmtB_CR = (b) => fmtCompactB(b, currency);
-  const [sel, setSel] = useState(PARTNERS_CR[1]);
+  // Dữ liệu thật: khách từ công nợ + chỉ số tài chính nhập tay (real mode). Demo → PARTNERS_CR.
+  const [cfData, setCfData] = useState(null);
+  const [factorsMap, setFactorsMap] = useState({});
+  useEffect(() => {
+    if (DEMO_MODE || !company?.id) { setCfData(null); setFactorsMap({}); return; }
+    fetchCashflowData(company.id).then(setCfData).catch(() => setCfData(null));
+    fetchCreditFactors(company.id).then(setFactorsMap).catch(() => setFactorsMap({}));
+  }, [company?.id]);
+  const customers = useMemo(() => (DEMO_MODE ? PARTNERS_CR : buildCreditReal(cfData, factorsMap)), [cfData, factorsMap]);
+  const [selId, setSelId] = useState(null);
+  useEffect(() => { setSelId((s) => (customers.find((c) => c.id === s) ? s : customers[0]?.id || null)); }, [customers]);
+  const sel = customers.find((c) => c.id === selId) || null;
   const [phase, setPhase] = useState("idle"); // idle | scoring | done
-  const [progress, setProgress] = useState(0); // 0..5 factors revealed
+  const [progress, setProgress] = useState(0);
+  const [editF, setEditF] = useState(null);   // form nhập tay chỉ số tài chính (real mode)
+  const [savingF, setSavingF] = useState(false);
   const timers = useRef([]);
 
   useEffect(() => {
@@ -2498,18 +2562,28 @@ function CreditScore() {
 
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
   useEffect(() => () => clearTimers(), []);
+  useEffect(() => { clearTimers(); setPhase("idle"); setProgress(0); setEditF(null); }, [selId]);
 
   const run = () => {
     clearTimers();
     setPhase("scoring"); setProgress(0);
     FACTORS_CR.forEach((_, i) => timers.current.push(setTimeout(() => setProgress(i + 1), 700 * (i + 1))));
-    timers.current.push(setTimeout(() => setPhase("done"), 700 * FACTORS_CR.length + 500)); // ~5s total
+    timers.current.push(setTimeout(() => setPhase("done"), 700 * FACTORS_CR.length + 500));
   };
-  const pick = (p) => { clearTimers(); setSel(p); setPhase("idle"); setProgress(0); };
+  const pick = (id) => { clearTimers(); setSelId(id); setPhase("idle"); setProgress(0); setEditF(null); };
+  const startEdit = () => sel && setEditF({ liquidity: sel.f.liquidity ?? "", leverage: sel.f.leverage ?? "", industry: sel.f.industry ?? "", size: sel.f.size ?? "", requested: sel.requested || "", industry_key: sel.industryKey || "cr.ind.other" });
+  const saveEdit = async () => {
+    if (!sel || !company?.id) return;
+    setSavingF(true);
+    try { await saveCreditFactors(company.id, sel.name, editF); setFactorsMap(await fetchCreditFactors(company.id)); setEditF(null); }
+    catch (e) { /* noop */ } finally { setSavingF(false); }
+  };
 
-  const score = scoreOf_CR(sel.f);
+  const score = sel ? scoreReal_CR(sel.f) : 0;
   const g = grade_CR(score);
-  const safeLimit = Math.round(sel.requested * g.ratio / 10) * 10;
+  const avgInvoice = sel?.pay?.avgInvoice || 0;
+  const baseLimit = sel && sel.requested > 0 ? sel.requested : Math.round(avgInvoice * 6);
+  const safeLimit = Math.round(baseLimit * g.ratio / 10) * 10;
   const reveal = phase === "done" ? 5 : progress;
 
   return (
@@ -2549,14 +2623,16 @@ function CreditScore() {
           <section className="card" style={panelCr}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}><Building2 size={16} color={C_CR.gold} /><h3 style={{ ...h3, fontSize: 15 }}>{t("cr.partners")}</h3></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {PARTNERS_CR.map((p) => {
-                const on = p.id === sel.id; const pg = grade_CR(scoreOf_CR(p.f));
+              {customers.length === 0 && <div style={{ fontSize: 12, color: C_CR.sub, padding: "8px 2px", lineHeight: 1.5 }}>{t("cr.empty")}</div>}
+              {customers.map((p) => {
+                const on = p.id === selId; const pg = grade_CR(scoreReal_CR(p.f));
+                const subtitle = DEMO_MODE ? `${t(p.industryKey)} · ${t("cr.revFmt", { n: fmtB_CR(p.revBn) })}` : t("cr.subline", { n: p.pay.n, open: fmtTr_CR(p.pay.open) });
                 return (
-                  <button key={p.id} className="btn" onClick={() => pick(p)} style={{ textAlign: "left", padding: "11px 12px", borderRadius: 12, background: on ? C_CR.cyanSoft : C_CR.panel2, border: `1px solid ${on ? C_CR.cyan + "66" : C_CR.line}` }}>
+                  <button key={p.id} className="btn" onClick={() => pick(p.id)} style={{ textAlign: "left", padding: "11px 12px", borderRadius: 12, background: on ? C_CR.cyanSoft : C_CR.panel2, border: `1px solid ${on ? C_CR.cyan + "66" : C_CR.line}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 12.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                        <div style={{ fontSize: 10.8, color: C_CR.sub, marginTop: 2 }}>{t(p.industryKey)} · {t("cr.revFmt", { n: fmtB_CR(p.revBn) })}</div>
+                        <div style={{ fontSize: 10.8, color: C_CR.sub, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{subtitle}</div>
                       </div>
                       <span className="tnum" style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 800, color: pg.c, background: pg.c + "1f", padding: "2px 7px", borderRadius: 6 }}>{pg.g}</span>
                     </div>
@@ -2571,15 +2647,49 @@ function CreditScore() {
 
           {/* SCORING ENGINE */}
           <section className="card" style={panelCr}>
+            {!sel ? (
+              <div style={{ padding: "48px 16px", textAlign: "center", color: C_CR.sub }}>
+                <Gauge size={28} style={{ opacity: .5 }} />
+                <div style={{ fontSize: 13, marginTop: 10, lineHeight: 1.6, maxWidth: 360, margin: "10px auto 0" }}>{t("cr.empty")}</div>
+              </div>
+            ) : (<>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontFamily: DISP_CR, fontWeight: 700, fontSize: 17 }}>{sel.name}</div>
-                <div style={{ fontSize: 12, color: C_CR.sub, marginTop: 2 }}>{t(sel.industryKey)} · {t("cr.rev", { rev: t("cr.revFmt", { n: fmtB_CR(sel.revBn) }) })} · {t("cr.req", { r: fmtTr_CR(sel.requested) })}</div>
+                <div style={{ fontSize: 12, color: C_CR.sub, marginTop: 2 }}>{DEMO_MODE ? `${t(sel.industryKey)} · ${t("cr.rev", { rev: t("cr.revFmt", { n: fmtB_CR(sel.revBn) }) })} · ${t("cr.req", { r: fmtTr_CR(sel.requested) })}` : t("cr.paysum", { paid: Math.round(sel.pay.paidRatio * 100), open: fmtTr_CR(sel.pay.open), overdue: fmtTr_CR(sel.pay.overdue), days: sel.pay.maxDays, n: sel.pay.n })}</div>
               </div>
-              <button className="btn" onClick={run} disabled={phase === "scoring"} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, color: "#06202f", background: phase === "scoring" ? "#33415566" : `linear-gradient(135deg, ${C_CR.cyan}, #2E9BD6)`, opacity: phase === "scoring" ? .7 : 1 }}>
-                {phase === "scoring" ? <><RefreshCw size={15} className="spin" />{t("cr.scoring")}</> : phase === "done" ? <><RefreshCw size={15} />{t("cr.rescore")}</> : <><Zap size={15} />{t("cr.score.btn")}</>}
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {!DEMO_MODE && !editF && (
+                  <button className="btn" onClick={startEdit} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 11, fontWeight: 700, fontSize: 12.5, color: C_CR.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}` }}><SlidersHorizontal size={14} />{t("cr.editf")}</button>
+                )}
+                <button className="btn" onClick={run} disabled={phase === "scoring"} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, color: "#06202f", background: phase === "scoring" ? "#33415566" : `linear-gradient(135deg, ${C_CR.cyan}, #2E9BD6)`, opacity: phase === "scoring" ? .7 : 1 }}>
+                  {phase === "scoring" ? <><RefreshCw size={15} className="spin" />{t("cr.scoring")}</> : phase === "done" ? <><RefreshCw size={15} />{t("cr.rescore")}</> : <><Zap size={15} />{t("cr.score.btn")}</>}
+                </button>
+              </div>
             </div>
+
+            {editF && (
+              <div style={{ marginTop: 12, padding: "14px 15px", borderRadius: 12, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>{t("cr.editf.title")}</div>
+                <div style={{ fontSize: 11, color: C_CR.sub, marginBottom: 12, lineHeight: 1.5 }}>{t("cr.editf.desc")}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
+                  {[["liquidity", "cr.f.liquidity"], ["leverage", "cr.f.leverage"], ["industry", "cr.f.industry"], ["size", "cr.f.size"]].map(([k, nk]) => (
+                    <label key={k} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 11, color: C_CR.sub }}>{t(nk)} <span style={{ opacity: .6 }}>(0–100)</span></span>
+                      <input type="number" min="0" max="100" value={editF[k]} onChange={(e) => setEditF({ ...editF, [k]: e.target.value })} className="tnum" style={{ padding: "8px 10px", borderRadius: 9, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 13, outline: "none", fontFamily: "inherit" }} />
+                    </label>
+                  ))}
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: C_CR.sub }}>{t("cr.editf.requested")}</span>
+                    <input type="number" min="0" value={editF.requested} onChange={(e) => setEditF({ ...editF, requested: e.target.value })} className="tnum" style={{ padding: "8px 10px", borderRadius: 9, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 13, outline: "none", fontFamily: "inherit" }} />
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 9, marginTop: 13 }}>
+                  <button className="btn" onClick={saveEdit} disabled={savingF} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 9, fontWeight: 800, fontSize: 12.5, color: "#0b1a10", background: C_CR.green, opacity: savingF ? .7 : 1 }}><Check size={14} />{savingF ? t("cr.editf.saving") : t("cr.editf.save")}</button>
+                  <button className="btn" onClick={() => setEditF(null)} style={{ padding: "9px 14px", borderRadius: 9, fontWeight: 700, fontSize: 12.5, color: C_CR.sub, background: "transparent", border: `1px solid ${C_CR.line}` }}>{t("cr.editf.cancel")}</button>
+                </div>
+              </div>
+            )}
 
             {phase === "idle" ? (
               <div style={{ padding: "40px 16px", textAlign: "center", color: C_CR.sub }}>
@@ -2605,21 +2715,22 @@ function CreditScore() {
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                     {FACTORS_CR.map((f, i) => {
-                      const shown = i < reveal; const Ic = f.icon; const v = sel.f[f.key];
-                      const vc = v >= 75 ? C_CR.green : v >= 55 ? C_CR.gold : v >= 42 ? C_CR.orange : C_CR.red;
+                      const shown = i < reveal; const Ic = f.icon; const v = sel.f[f.key]; const missing = v == null;
+                      const vc = missing ? C_CR.sub : (v >= 75 ? C_CR.green : v >= 55 ? C_CR.gold : v >= 42 ? C_CR.orange : C_CR.red);
+                      const srcLabel = DEMO_MODE ? t(f.srcKey) : (f.key === "payment" ? t("cr.src.real") : t("cr.src.manual"));
                       return (
                         <div key={f.key} style={{ opacity: shown ? 1 : 0.32, transition: "opacity .3s" }} className={shown ? "pop" : ""}>
                           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
-                            <div style={{ width: 26, height: 26, borderRadius: 7, flex: "0 0 auto", display: "grid", placeItems: "center", background: shown ? vc + "22" : "rgba(255,255,255,.05)" }}>
+                            <div style={{ width: 26, height: 26, borderRadius: 7, flex: "0 0 auto", display: "grid", placeItems: "center", background: shown && !missing ? vc + "22" : "rgba(255,255,255,.05)" }}>
                               {shown ? <Ic size={14} color={vc} /> : <RefreshCw size={13} className="spin" color={C_CR.sub} />}
                             </div>
                             <span style={{ fontSize: 12.3, fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(f.nameKey)}</span>
-                            <span style={{ fontSize: 10, color: C_CR.sub, flex: "0 0 auto", whiteSpace: "nowrap" }}>{t(f.srcKey)}</span>
-                            <span className="tnum" style={{ fontSize: 12.5, fontWeight: 800, color: shown ? vc : C_CR.sub, width: 30, flex: "0 0 auto", textAlign: "right" }}>{shown ? v : "··"}</span>
+                            <span style={{ fontSize: 10, color: f.key === "payment" && !DEMO_MODE ? C_CR.green : C_CR.sub, flex: "0 0 auto", whiteSpace: "nowrap" }}>{srcLabel}</span>
+                            <span className="tnum" style={{ fontSize: missing ? 9.5 : 12.5, fontWeight: 800, color: shown ? vc : C_CR.sub, width: missing ? 58 : 30, flex: "0 0 auto", textAlign: "right" }}>{shown ? (missing ? t("cr.notset") : v) : "··"}</span>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 35 }}>
                             <div style={{ flex: 1, height: 6, borderRadius: 4, background: "rgba(255,255,255,.07)", overflow: "hidden" }}>
-                              <div style={{ width: shown ? `${v}%` : "0%", height: "100%", background: vc, borderRadius: 4, transition: "width .5s" }} />
+                              <div style={{ width: shown && !missing ? `${v}%` : "0%", height: "100%", background: vc, borderRadius: 4, transition: "width .5s" }} />
                             </div>
                             <span className="tnum" style={{ fontSize: 9.5, color: C_CR.sub, flex: "0 0 auto", whiteSpace: "nowrap", textAlign: "right" }}>{t("cr.weight", { w: Math.round(f.w * 100) })}</span>
                           </div>
@@ -2643,15 +2754,13 @@ function CreditScore() {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap", flex: "0 1 auto" }}>
-                    <Mini_CR label={t("cr.limit.requested")} value={fmtTr_CR(sel.requested)} c={C_CR.sub} />
+                    <Mini_CR label={t("cr.limit.base")} value={fmtTr_CR(baseLimit)} c={C_CR.sub} />
                     <Mini_CR label={t("cr.limit.approved")} value={fmtTr_CR(safeLimit)} c={g.c} />
                     <Mini_CR label={t("cr.limit.ratio")} value={`${Math.round(g.ratio * 100)}%`} c={g.c} />
                   </div>
                 </div>
                 <div style={{ fontSize: 11.8, color: C_CR.sub, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C_CR.line}`, lineHeight: 1.55 }}>
-                  {safeLimit >= sel.requested
-                    ? t("cr.limit.good", { g: g.g, req: fmtTr_CR(sel.requested) })
-                    : t("cr.limit.reduced", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), req: fmtTr_CR(sel.requested), weak: t(weakest_CR(sel.f)) })}
+                  {t("cr.limit.note", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), ratio: Math.round(g.ratio * 100), base: fmtTr_CR(baseLimit), weak: t(weakestReal_CR(sel.f)) })}
                 </div>
                 <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
                   <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)` }}><Check size={15} />{t("cr.apply")}</button>
@@ -2659,6 +2768,7 @@ function CreditScore() {
                 </div>
               </div>
             )}
+            </>)}
           </section>
         </div>
 
