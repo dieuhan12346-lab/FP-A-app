@@ -2471,9 +2471,56 @@ const FACTORS_CR = [
 
 const scoreOf_CR = (f) => Math.round(FACTORS_CR.reduce((s, x) => s + f[x.key] * x.w, 0));
 
-/* ---- Chấm điểm tín dụng THẬT (mô hình B): hành vi thanh toán auto từ công nợ + tài chính nhập tay ---- */
-const MANUAL_F_CR = ["liquidity", "leverage", "industry", "size"];
-/* Gộp công nợ theo khách → điểm hành vi thanh toán (payment) thật + trộn chỉ số nhập tay (factorsMap). */
+/* ---- Chấm điểm tín dụng THẬT (mô hình B): hành vi thanh toán auto + tài chính từ BCTC nhập tay ---- */
+/* Các mã số BCTC cần nhập (nhập theo đơn vị trên BCTC, miễn nhất quán). */
+const BCTC_FIELDS = [
+  { grp: "cr.bctc.bs", items: [["tsNganHan", "cr.bctc.tsNganHan"], ["noNganHan", "cr.bctc.noNganHan"], ["hangTonKho", "cr.bctc.hangTonKho"], ["tongNo", "cr.bctc.tongNo"], ["tongTaiSan", "cr.bctc.tongTaiSan"], ["vonCSH", "cr.bctc.vonCSH"], ["phaiThuKH", "cr.bctc.phaiThuKH"]] },
+  { grp: "cr.bctc.is", items: [["doanhThu", "cr.bctc.doanhThu"], ["gvhb", "cr.bctc.gvhb"], ["lnHDKD", "cr.bctc.lnHDKD"], ["chiPhiLaiVay", "cr.bctc.chiPhiLaiVay"], ["lnst", "cr.bctc.lnst"]] },
+  { grp: "cr.bctc.cf", items: [["dongTienHDKD", "cr.bctc.dongTienHDKD"]] },
+];
+/* Yếu tố cho bản THẬT: payment (auto) + 5 nhóm tỷ số tài chính (từ BCTC). Cùng shape với FACTORS_CR. */
+const REAL_FACTORS_CR = [
+  { key: "payment", nameKey: "cr.f.payment", icon: History, w: 0.30, srcKey: "cr.src.real" },
+  { key: "liquidity", nameKey: "cr.g.liquidity", icon: Wallet, w: 0.13, srcKey: "cr.src.bctc" },
+  { key: "leverage", nameKey: "cr.g.leverage", icon: TrendingDown, w: 0.16, srcKey: "cr.src.bctc" },
+  { key: "profitability", nameKey: "cr.g.profit", icon: TrendingUp, w: 0.14, srcKey: "cr.src.bctc" },
+  { key: "efficiency", nameKey: "cr.g.efficiency", icon: RefreshCw, w: 0.10, srcKey: "cr.src.bctc" },
+  { key: "cashflow", nameKey: "cr.g.cashflow", icon: Banknote, w: 0.17, srcKey: "cr.src.bctc" },
+];
+
+/* Mô tả 9 tỷ số để hiển thị chi tiết (giá trị + màu theo điểm). */
+const RATIO_ROWS = [
+  { k: "cr", sk: "crScore", lk: "cr.r.cr", fmt: (v) => v.toFixed(2) },
+  { k: "qr", sk: "qrScore", lk: "cr.r.qr", fmt: (v) => v.toFixed(2) },
+  { k: "da", sk: "daScore", lk: "cr.r.da", fmt: (v) => Math.round(v * 100) + "%" },
+  { k: "icr", sk: "icrScore", lk: "cr.r.icr", fmt: (v) => (v === Infinity ? "∞" : v.toFixed(1)) },
+  { k: "roa", sk: "roaScore", lk: "cr.r.roa", fmt: (v) => Math.round(v * 100) + "%" },
+  { k: "roe", sk: "roeScore", lk: "cr.r.roe", fmt: (v) => Math.round(v * 100) + "%" },
+  { k: "inv", sk: "invScore", lk: "cr.r.inv", fmt: (v) => v.toFixed(1) },
+  { k: "dso", sk: "dsoScore", lk: "cr.r.dso", fmt: (v) => Math.round(v) + "d" },
+  { k: "ocf", sk: "ocfScore", lk: "cr.r.ocf", fmt: (v) => v.toFixed(2) },
+];
+
+/* Tính 9 tỷ số + điểm từng tỷ số (chuẩn ngân hàng) + điểm 5 nhóm. Trả {ratios, groups}. */
+function scoreRatios_CR(fin) {
+  const n = (k) => { const v = Number(fin?.[k]); return isFinite(v) && fin?.[k] != null && fin?.[k] !== "" ? v : null; };
+  const r = {};
+  const has = (...ks) => ks.every((k) => n(k) != null);
+  if (has("tsNganHan", "noNganHan") && n("noNganHan") > 0) { const cr = n("tsNganHan") / n("noNganHan"); r.cr = cr; r.crScore = cr >= 2 ? 100 : cr >= 1.5 ? 82 : cr >= 1 ? 58 : 25; }
+  if (has("tsNganHan", "hangTonKho", "noNganHan") && n("noNganHan") > 0) { const qr = (n("tsNganHan") - n("hangTonKho")) / n("noNganHan"); r.qr = qr; r.qrScore = qr >= 1 ? 92 : qr >= 0.7 ? 66 : qr >= 0.4 ? 45 : 30; }
+  if (has("tongNo", "tongTaiSan") && n("tongTaiSan") > 0) { const da = n("tongNo") / n("tongTaiSan"); r.da = da; r.daScore = da <= 0.4 ? 92 : da <= 0.6 ? 72 : da <= 0.7 ? 48 : 22; }
+  if (has("lnHDKD", "chiPhiLaiVay")) { const ci = n("chiPhiLaiVay"); if (ci <= 0) { r.icr = Infinity; r.icrScore = 95; } else { const icr = (n("lnHDKD") + ci) / ci; r.icr = icr; r.icrScore = icr >= 3 ? 95 : icr >= 1.5 ? 66 : icr >= 1 ? 42 : 22; } }
+  if (has("lnst", "tongTaiSan") && n("tongTaiSan") > 0) { const roa = n("lnst") / n("tongTaiSan"); r.roa = roa; r.roaScore = roa >= 0.10 ? 92 : roa >= 0.05 ? 72 : roa >= 0.02 ? 52 : roa >= 0 ? 35 : 15; }
+  if (has("lnst", "vonCSH") && n("vonCSH") > 0) { const roe = n("lnst") / n("vonCSH"); r.roe = roe; r.roeScore = roe >= 0.20 ? 92 : roe >= 0.12 ? 74 : roe >= 0.06 ? 55 : roe >= 0 ? 35 : 15; }
+  if (has("gvhb", "hangTonKho") && n("hangTonKho") > 0) { const inv = n("gvhb") / n("hangTonKho"); r.inv = inv; r.invScore = inv >= 6 ? 88 : inv >= 3 ? 68 : inv >= 1.5 ? 50 : 32; }
+  if (has("phaiThuKH", "doanhThu") && n("doanhThu") > 0) { const dso = n("phaiThuKH") * 365 / n("doanhThu"); r.dso = dso; r.dsoScore = dso <= 30 ? 92 : dso <= 60 ? 72 : dso <= 90 ? 52 : 30; }
+  if (has("dongTienHDKD", "noNganHan") && n("noNganHan") > 0) { const ocf = n("dongTienHDKD") / n("noNganHan"); r.ocf = ocf; r.ocfScore = ocf >= 0.4 ? 92 : ocf >= 0.2 ? 72 : ocf >= 0 ? 52 : 20; }
+  const avg = (...ks) => { const vs = ks.map((k) => r[k]).filter((x) => x != null); return vs.length ? Math.round(vs.reduce((a, b) => a + b, 0) / vs.length) : null; };
+  const groups = { liquidity: avg("crScore", "qrScore"), leverage: avg("daScore", "icrScore"), profitability: avg("roaScore", "roeScore"), efficiency: avg("invScore", "dsoScore"), cashflow: avg("ocfScore") };
+  return { ratios: r, groups };
+}
+
+/* Gộp công nợ theo khách → điểm hành vi thanh toán (payment) thật + điểm 5 nhóm tài chính từ BCTC. */
 function buildCreditReal(cfData, factorsMap) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const groups = {};
@@ -2497,28 +2544,29 @@ function buildCreditReal(cfData, factorsMap) {
     const lateness = Math.min(g.maxDays, 90) / 90;
     const payment = Math.max(5, Math.min(98, Math.round(55 + paidRatio * 35 - overdueRatio * 40 - lateness * 25)));
     const m = factorsMap[key] || {};
+    const fin = m.financials || null;
+    const rated = fin ? scoreRatios_CR(fin) : { ratios: null, groups: {} };
     const f = { payment };
-    for (const k of MANUAL_F_CR) if (m[k] != null && m[k] !== "") f[k] = Math.max(0, Math.min(100, Number(m[k])));
+    for (const [k, v] of Object.entries(rated.groups)) if (v != null) f[k] = v;
     const avgInvoice = g.n > 0 ? g.total / g.n : 0;
     return {
-      id: key, name: g.name, f,
+      id: key, name: g.name, f, fin, ratios: rated.ratios,
       requested: Number(m.requested) || 0,
-      industryKey: m.industry_key || "cr.ind.other",
       pay: { total: g.total, paid: g.paid, open: g.open, overdue: g.overdue, maxDays: g.maxDays, n: g.n, paidRatio, overdueRatio, avgInvoice },
-      hasManual: MANUAL_F_CR.some((k) => f[k] != null),
+      hasFin: !!fin,
     };
   }).sort((a, b) => b.pay.open - a.pay.open);
 }
-/* Điểm tổng: re-chuẩn hoá trọng số CHỈ trên yếu tố có dữ liệu (payment luôn có; tài chính nếu đã nhập). */
-function scoreReal_CR(f) {
+/* Điểm tổng: re-chuẩn hoá trọng số CHỈ trên yếu tố có dữ liệu (payment luôn có; nhóm tài chính nếu đã nhập BCTC). */
+function scoreReal_CR(f, flist) {
   let ws = 0, sum = 0;
-  for (const x of FACTORS_CR) if (f[x.key] != null) { ws += x.w; sum += f[x.key] * x.w; }
+  for (const x of flist) if (f[x.key] != null) { ws += x.w; sum += f[x.key] * x.w; }
   return ws > 0 ? Math.round(sum / ws) : 0;
 }
-function weakestReal_CR(f) {
-  const present = FACTORS_CR.map((x) => x.key).filter((k) => f[k] != null);
+function weakestReal_CR(f, flist) {
+  const present = flist.map((x) => x.key).filter((k) => f[k] != null);
   const k = present.sort((a, b) => f[a] - f[b])[0] || "payment";
-  return { liquidity: "cr.weak.liquidity", leverage: "cr.weak.leverage", payment: "cr.weak.payment", industry: "cr.weak.industry", size: "cr.weak.size" }[k];
+  return { payment: "cr.weak.payment", liquidity: "cr.weak.liquidity", leverage: "cr.weak.leverage", profitability: "cr.weak.profit", efficiency: "cr.weak.efficiency", cashflow: "cr.weak.cashflow", industry: "cr.weak.industry", size: "cr.weak.size" }[k];
 }
 function grade_CR(score) {
   if (score >= 80) return { g: "AA", c: C_CR.green, labelKey: "cr.grade.AA", Icon: ShieldCheck, ratio: 1.0 };
@@ -2548,6 +2596,7 @@ function CreditScore() {
   const [selId, setSelId] = useState(null);
   useEffect(() => { setSelId((s) => (customers.find((c) => c.id === s) ? s : customers[0]?.id || null)); }, [customers]);
   const sel = customers.find((c) => c.id === selId) || null;
+  const FLIST = DEMO_MODE ? FACTORS_CR : REAL_FACTORS_CR;   // demo: 5 yếu tố cũ · thật: payment + 5 nhóm BCTC
   const [phase, setPhase] = useState("idle"); // idle | scoring | done
   const [progress, setProgress] = useState(0);
   const [editF, setEditF] = useState(null);   // form nhập tay chỉ số tài chính (real mode)
@@ -2567,11 +2616,11 @@ function CreditScore() {
   const run = () => {
     clearTimers();
     setPhase("scoring"); setProgress(0);
-    FACTORS_CR.forEach((_, i) => timers.current.push(setTimeout(() => setProgress(i + 1), 700 * (i + 1))));
-    timers.current.push(setTimeout(() => setPhase("done"), 700 * FACTORS_CR.length + 500));
+    FLIST.forEach((_, i) => timers.current.push(setTimeout(() => setProgress(i + 1), 550 * (i + 1))));
+    timers.current.push(setTimeout(() => setPhase("done"), 550 * FLIST.length + 500));
   };
   const pick = (id) => { clearTimers(); setSelId(id); setPhase("idle"); setProgress(0); setEditF(null); };
-  const startEdit = () => sel && setEditF({ liquidity: sel.f.liquidity ?? "", leverage: sel.f.leverage ?? "", industry: sel.f.industry ?? "", size: sel.f.size ?? "", requested: sel.requested || "", industry_key: sel.industryKey || "cr.ind.other" });
+  const startEdit = () => sel && setEditF({ financials: { ...(sel.fin || {}) }, requested: sel.requested || "" });
   const saveEdit = async () => {
     if (!sel || !company?.id) return;
     setSavingF(true);
@@ -2579,12 +2628,12 @@ function CreditScore() {
     catch (e) { /* noop */ } finally { setSavingF(false); }
   };
 
-  const score = sel ? scoreReal_CR(sel.f) : 0;
+  const score = sel ? scoreReal_CR(sel.f, FLIST) : 0;
   const g = grade_CR(score);
   const avgInvoice = sel?.pay?.avgInvoice || 0;
   const baseLimit = sel && sel.requested > 0 ? sel.requested : Math.round(avgInvoice * 6);
   const safeLimit = Math.round(baseLimit * g.ratio / 10) * 10;
-  const reveal = phase === "done" ? 5 : progress;
+  const reveal = phase === "done" ? FLIST.length : progress;
 
   return (
     <div style={{ fontFamily: UI_CR, color: C_CR.txt }}>
@@ -2625,7 +2674,7 @@ function CreditScore() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {customers.length === 0 && <div style={{ fontSize: 12, color: C_CR.sub, padding: "8px 2px", lineHeight: 1.5 }}>{t("cr.empty")}</div>}
               {customers.map((p) => {
-                const on = p.id === selId; const pg = grade_CR(scoreReal_CR(p.f));
+                const on = p.id === selId; const pg = grade_CR(scoreReal_CR(p.f, FLIST));
                 const subtitle = DEMO_MODE ? `${t(p.industryKey)} · ${t("cr.revFmt", { n: fmtB_CR(p.revBn) })}` : t("cr.subline", { n: p.pay.n, open: fmtTr_CR(p.pay.open) });
                 return (
                   <button key={p.id} className="btn" onClick={() => pick(p.id)} style={{ textAlign: "left", padding: "11px 12px", borderRadius: 12, background: on ? C_CR.cyanSoft : C_CR.panel2, border: `1px solid ${on ? C_CR.cyan + "66" : C_CR.line}` }}>
@@ -2672,16 +2721,23 @@ function CreditScore() {
               <div style={{ marginTop: 12, padding: "14px 15px", borderRadius: 12, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>{t("cr.editf.title")}</div>
                 <div style={{ fontSize: 11, color: C_CR.sub, marginBottom: 12, lineHeight: 1.5 }}>{t("cr.editf.desc")}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
-                  {[["liquidity", "cr.f.liquidity"], ["leverage", "cr.f.leverage"], ["industry", "cr.f.industry"], ["size", "cr.f.size"]].map(([k, nk]) => (
-                    <label key={k} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <span style={{ fontSize: 11, color: C_CR.sub }}>{t(nk)} <span style={{ opacity: .6 }}>(0–100)</span></span>
-                      <input type="number" min="0" max="100" value={editF[k]} onChange={(e) => setEditF({ ...editF, [k]: e.target.value })} className="tnum" style={{ padding: "8px 10px", borderRadius: 9, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 13, outline: "none", fontFamily: "inherit" }} />
-                    </label>
-                  ))}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 11, color: C_CR.sub }}>{t("cr.editf.requested")}</span>
-                    <input type="number" min="0" value={editF.requested} onChange={(e) => setEditF({ ...editF, requested: e.target.value })} className="tnum" style={{ padding: "8px 10px", borderRadius: 9, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 13, outline: "none", fontFamily: "inherit" }} />
+                {BCTC_FIELDS.map((grp) => (
+                  <div key={grp.grp} style={{ marginBottom: 11 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: C_CR.cyan, marginBottom: 7, letterSpacing: ".04em" }}>{t(grp.grp)}</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 9 }}>
+                      {grp.items.map(([k, lk]) => (
+                        <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                          <span style={{ fontSize: 10.5, color: C_CR.sub }}>{t(lk)}</span>
+                          <input type="number" value={editF.financials[k] ?? ""} onChange={(e) => setEditF({ ...editF, financials: { ...editF.financials, [k]: e.target.value } })} className="tnum" style={{ padding: "8px 10px", borderRadius: 9, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 12.5, outline: "none", fontFamily: "inherit" }} />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 9 }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <span style={{ fontSize: 10.5, color: C_CR.sub }}>{t("cr.editf.requested")}</span>
+                    <input type="number" min="0" value={editF.requested} onChange={(e) => setEditF({ ...editF, requested: e.target.value })} className="tnum" style={{ padding: "8px 10px", borderRadius: 9, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 12.5, outline: "none", fontFamily: "inherit" }} />
                   </label>
                 </div>
                 <div style={{ display: "flex", gap: 9, marginTop: 13 }}>
@@ -2714,7 +2770,7 @@ function CreditScore() {
                     {phase === "scoring" ? <><Cpu size={13} className="live" color={C_CR.cyan} />{t("cr.analyzing")}</> : <><CheckCircle2 size={13} color={C_CR.green} />{t("cr.transparent")}</>}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                    {FACTORS_CR.map((f, i) => {
+                    {FLIST.map((f, i) => {
                       const shown = i < reveal; const Ic = f.icon; const v = sel.f[f.key]; const missing = v == null;
                       const vc = missing ? C_CR.sub : (v >= 75 ? C_CR.green : v >= 55 ? C_CR.gold : v >= 42 ? C_CR.orange : C_CR.red);
                       const srcLabel = DEMO_MODE ? t(f.srcKey) : (f.key === "payment" ? t("cr.src.real") : t("cr.src.manual"));
@@ -2742,6 +2798,24 @@ function CreditScore() {
               </div>
             )}
 
+            {/* CHI TIẾT 9 TỶ SỐ (bản thật, có nhập BCTC) */}
+            {phase === "done" && !DEMO_MODE && sel.ratios && Object.keys(sel.ratios).length > 0 && (
+              <div className="pop" style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: C_CR.sub, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Scale size={13} color={C_CR.cyan} />{t("cr.ratios.title")}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(138px, 1fr))", gap: 8 }}>
+                  {RATIO_ROWS.filter((row) => sel.ratios[row.k] != null).map((row) => {
+                    const sc = sel.ratios[row.sk]; const c = sc >= 75 ? C_CR.green : sc >= 55 ? C_CR.gold : sc >= 42 ? C_CR.orange : C_CR.red;
+                    return (
+                      <div key={row.k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 11px", borderRadius: 9, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
+                        <span style={{ fontSize: 10.8, color: C_CR.sub, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t(row.lk)}</span>
+                        <span className="tnum" style={{ fontSize: 12.5, fontWeight: 800, color: c, flex: "0 0 auto" }}>{row.fmt(sel.ratios[row.k])}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* CREDIT LIMIT RECOMMENDATION */}
             {phase === "done" && (
               <div className="pop" style={{ marginTop: 18, padding: "16px 18px", borderRadius: 14, background: g.c + "12", border: `1px solid ${g.c}55` }}>
@@ -2760,7 +2834,7 @@ function CreditScore() {
                   </div>
                 </div>
                 <div style={{ fontSize: 11.8, color: C_CR.sub, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C_CR.line}`, lineHeight: 1.55 }}>
-                  {t("cr.limit.note", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), ratio: Math.round(g.ratio * 100), base: fmtTr_CR(baseLimit), weak: t(weakestReal_CR(sel.f)) })}
+                  {t("cr.limit.note", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), ratio: Math.round(g.ratio * 100), base: fmtTr_CR(baseLimit), weak: t(weakestReal_CR(sel.f, FLIST)) })}
                 </div>
                 <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
                   <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)` }}><Check size={15} />{t("cr.apply")}</button>

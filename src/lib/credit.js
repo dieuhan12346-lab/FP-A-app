@@ -5,35 +5,37 @@ import { supabase } from "./supabase";
 
 const normKey = (s) => String(s || "").trim().toLowerCase();
 
-/** Tải toàn bộ chỉ số nhập tay của công ty → map { customerKey: {liquidity,leverage,industry,size,industry_key,requested} }. */
+/** Tải chỉ số của công ty → map { customerKey: { requested, financials:{...số liệu BCTC} } }. */
 export async function fetchCreditFactors(companyId) {
   if (!supabase || !companyId) return {};
   const { data, error } = await supabase
     .from("credit_factors")
-    .select("customer, liquidity, leverage, industry, size, industry_key, requested")
+    .select("customer, requested, financials")
     .eq("company_id", companyId);
   if (error) throw error;
   const map = {};
   for (const r of data || []) {
     map[normKey(r.customer)] = {
-      liquidity: r.liquidity, leverage: r.leverage, industry: r.industry, size: r.size,
-      industry_key: r.industry_key || "", requested: r.requested == null ? "" : Number(r.requested),
+      requested: r.requested == null ? "" : Number(r.requested),
+      financials: r.financials || null,
     };
   }
   return map;
 }
 
-/** Lưu (upsert) chỉ số nhập tay cho 1 khách. fields: {liquidity,leverage,industry,size,industry_key,requested}. */
+/** Lưu (upsert) cho 1 khách. fields: { requested, financials:{...các mã số BCTC} }. */
 export async function saveCreditFactors(companyId, customer, fields) {
   if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
   if (!companyId) throw new Error("Chưa xác định được hồ sơ công ty");
   const num = (v) => (v === "" || v == null ? null : Number(v));
+  // Chỉ giữ các số hợp lệ trong financials (bỏ ô trống).
+  const fin = {};
+  for (const [k, v] of Object.entries(fields.financials || {})) if (v !== "" && v != null && isFinite(Number(v))) fin[k] = Number(v);
   const { error } = await supabase.from("credit_factors").upsert(
     {
       company_id: companyId, customer,
-      liquidity: num(fields.liquidity), leverage: num(fields.leverage),
-      industry: num(fields.industry), size: num(fields.size),
-      industry_key: fields.industry_key || null, requested: num(fields.requested),
+      requested: num(fields.requested),
+      financials: Object.keys(fin).length ? fin : null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "company_id,customer" }
