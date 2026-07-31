@@ -2475,7 +2475,7 @@ const scoreOf_CR = (f) => Math.round(FACTORS_CR.reduce((s, x) => s + f[x.key] * 
 /* ---- Chấm điểm tín dụng THẬT (mô hình B): hành vi thanh toán auto + tài chính từ BCTC nhập tay ---- */
 /* Các mã số BCTC cần nhập (nhập theo đơn vị trên BCTC, miễn nhất quán). */
 const BCTC_FIELDS = [
-  { grp: "cr.bctc.bs", items: [["tsNganHan", "cr.bctc.tsNganHan"], ["noNganHan", "cr.bctc.noNganHan"], ["hangTonKho", "cr.bctc.hangTonKho"], ["tongNo", "cr.bctc.tongNo"], ["tongTaiSan", "cr.bctc.tongTaiSan"], ["vonCSH", "cr.bctc.vonCSH"], ["phaiThuKH", "cr.bctc.phaiThuKH"]] },
+  { grp: "cr.bctc.bs", items: [["tsNganHan", "cr.bctc.tsNganHan"], ["noNganHan", "cr.bctc.noNganHan"], ["hangTonKho", "cr.bctc.hangTonKho"], ["tongNo", "cr.bctc.tongNo"], ["tongTaiSan", "cr.bctc.tongTaiSan"], ["vonCSH", "cr.bctc.vonCSH"], ["phaiThuKH", "cr.bctc.phaiThuKH"], ["tongTaiSanDau", "cr.bctc.tongTaiSanDau"], ["vonCSHDau", "cr.bctc.vonCSHDau"]] },
   { grp: "cr.bctc.is", items: [["doanhThu", "cr.bctc.doanhThu"], ["gvhb", "cr.bctc.gvhb"], ["lnHDKD", "cr.bctc.lnHDKD"], ["chiPhiLaiVay", "cr.bctc.chiPhiLaiVay"], ["lnst", "cr.bctc.lnst"]] },
   { grp: "cr.bctc.cf", items: [["dongTienHDKD", "cr.bctc.dongTienHDKD"]] },
 ];
@@ -2511,8 +2511,11 @@ function scoreRatios_CR(fin) {
   if (has("tsNganHan", "hangTonKho", "noNganHan") && n("noNganHan") > 0) { const qr = (n("tsNganHan") - n("hangTonKho")) / n("noNganHan"); r.qr = qr; r.qrScore = qr >= 1 ? 92 : qr >= 0.7 ? 66 : qr >= 0.4 ? 45 : 30; }
   if (has("tongNo", "tongTaiSan") && n("tongTaiSan") > 0) { const da = n("tongNo") / n("tongTaiSan"); r.da = da; r.daScore = da <= 0.4 ? 92 : da <= 0.6 ? 72 : da <= 0.7 ? 48 : 22; }
   if (has("lnHDKD", "chiPhiLaiVay")) { const ci = n("chiPhiLaiVay"); if (ci <= 0) { r.icr = Infinity; r.icrScore = 95; } else { const icr = (n("lnHDKD") + ci) / ci; r.icr = icr; r.icrScore = icr >= 3 ? 95 : icr >= 1.5 ? 66 : icr >= 1 ? 42 : 22; } }
-  if (has("lnst", "tongTaiSan") && n("tongTaiSan") > 0) { const roa = n("lnst") / n("tongTaiSan"); r.roa = roa; r.roaScore = roa >= 0.10 ? 92 : roa >= 0.05 ? 72 : roa >= 0.02 ? 52 : roa >= 0 ? 35 : 15; }
-  if (has("lnst", "vonCSH") && n("vonCSH") > 0) { const roe = n("lnst") / n("vonCSH"); r.roe = roe; r.roeScore = roe >= 0.20 ? 92 : roe >= 0.12 ? 74 : roe >= 0.06 ? 55 : roe >= 0 ? 35 : 15; }
+  // ROA/ROE chuẩn ngân hàng dùng số BÌNH QUÂN (đầu kỳ + cuối kỳ)/2; chưa nhập đầu kỳ → dùng cuối kỳ.
+  const avgOf = (endK, begK) => { const e = n(endK), b = n(begK); return e == null ? null : (b == null ? e : (e + b) / 2); };
+  const taBq = avgOf("tongTaiSan", "tongTaiSanDau"), vcshBq = avgOf("vonCSH", "vonCSHDau");
+  if (n("lnst") != null && taBq > 0) { const roa = n("lnst") / taBq; r.roa = roa; r.roaScore = roa >= 0.10 ? 92 : roa >= 0.05 ? 72 : roa >= 0.02 ? 52 : roa >= 0 ? 35 : 15; }
+  if (n("lnst") != null && vcshBq > 0) { const roe = n("lnst") / vcshBq; r.roe = roe; r.roeScore = roe >= 0.20 ? 92 : roe >= 0.12 ? 74 : roe >= 0.06 ? 55 : roe >= 0 ? 35 : 15; }
   if (has("gvhb", "hangTonKho") && n("hangTonKho") > 0) { const inv = n("gvhb") / n("hangTonKho"); r.inv = inv; r.invScore = inv >= 6 ? 88 : inv >= 3 ? 68 : inv >= 1.5 ? 50 : 32; }
   if (has("phaiThuKH", "doanhThu") && n("doanhThu") > 0) { const dso = n("phaiThuKH") * 365 / n("doanhThu"); r.dso = dso; r.dsoScore = dso <= 30 ? 92 : dso <= 60 ? 72 : dso <= 90 ? 52 : 30; }
   if (has("dongTienHDKD", "noNganHan") && n("noNganHan") > 0) { const ocf = n("dongTienHDKD") / n("noNganHan"); r.ocf = ocf; r.ocfScore = ocf >= 0.4 ? 92 : ocf >= 0.2 ? 72 : ocf >= 0 ? 52 : 20; }

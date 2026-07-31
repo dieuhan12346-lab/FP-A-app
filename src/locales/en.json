@@ -586,6 +586,8 @@
   "cr.bctc.tongTaiSan": "Total assets (270)",
   "cr.bctc.vonCSH": "Owner's equity (410)",
   "cr.bctc.phaiThuKH": "Accounts receivable (131)",
+  "cr.bctc.tongTaiSanDau": "Total assets — BEGINNING (270)",
+  "cr.bctc.vonCSHDau": "Equity — BEGINNING (410)",
   "cr.bctc.doanhThu": "Net revenue (10)",
   "cr.bctc.gvhb": "COGS (11)",
   "cr.bctc.lnHDKD": "Operating profit (30)",

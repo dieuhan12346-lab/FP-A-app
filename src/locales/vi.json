@@ -586,6 +586,8 @@
   "cr.bctc.tongTaiSan": "Tổng tài sản (270)",
   "cr.bctc.vonCSH": "Vốn chủ sở hữu (410)",
   "cr.bctc.phaiThuKH": "Phải thu khách hàng (131)",
+  "cr.bctc.tongTaiSanDau": "Tổng tài sản ĐẦU kỳ (270)",
+  "cr.bctc.vonCSHDau": "Vốn CSH ĐẦU kỳ (410)",
   "cr.bctc.doanhThu": "Doanh thu thuần (10)",
   "cr.bctc.gvhb": "Giá vốn hàng bán (11)",
   "cr.bctc.lnHDKD": "LN thuần HĐKD (30)",

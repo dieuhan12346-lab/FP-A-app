@@ -99,6 +99,8 @@ const stripLead = (s) => s.replace(/^[-•\s]*((so|muc)\s*)?([ivxlcdm]+|[a-z]|\d
    mới so được với chỉ tiêu THỜI ĐIỂM của Bảng cân đối. Nếu không, DSO/vòng quay/ROA/ROE sai ~4 lần. */
 const FLOW_FIELDS = new Set(["doanhThu", "gvhb", "chiPhiLaiVay", "lnHDKD", "lnst", "dongTienHDKD"]);
 const isQuarter = (label) => /^q[1-4]\s*[-/]?\s*\d{4}|^\d{4}\s*[-/]?\s*q[1-4]|^quy\s*[1-4]/.test(norm(String(label)));
+/* Chỉ tiêu cần SỐ ĐẦU KỲ để tính bình quân (ROA/ROE theo chuẩn ngân hàng). */
+const AVG_BEGIN = { tongTaiSan: "tongTaiSanDau", vonCSH: "vonCSHDau" };
 /** Số thứ tự quý trong nhãn ("Q2-2026" → 2). Dùng để quy năm số LŨY KẾ. */
 const quarterNo = (label) => { const m = norm(String(label)).match(/q(?:uy)?\s*[-/]?\s*([1-4])|([1-4])\s*[-/]?\s*q/); return m ? Number(m[1] || m[2]) : null; };
 
@@ -130,12 +132,18 @@ export function parseBCTC(buf, periodIdx = null) {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" });
     const ps = detectPeriods(rows);
     if (ps.length > periods.length) periods = ps;
-    // Cột giá trị muốn lấy: kỳ người dùng chọn, mặc định kỳ cuối (mới nhất).
-    const col = ps.length ? (periodIdx != null && ps[periodIdx] ? ps[periodIdx].idx : ps[ps.length - 1].idx) : null;
+    // Mẫu TT200 có 2 cột "Số cuối năm | Số đầu năm" (cuối đứng TRƯỚC) → không được lấy cột chót.
+    const iCuoi = ps.findIndex((p) => /cuoi (nam|ky)|nam nay/.test(norm(p.label)));
+    const iDau = ps.findIndex((p) => /dau (nam|ky)|nam truoc/.test(norm(p.label)));
+    // Cột giá trị muốn lấy: kỳ người dùng chọn → cột "cuối kỳ" → mặc định kỳ mới nhất.
+    const end = ps.length ? (periodIdx != null && ps[periodIdx] ? periodIdx : (iCuoi >= 0 ? iCuoi : ps.length - 1)) : -1;
+    const col = ps.length ? ps[end].idx : null;
+    // Cột ĐẦU KỲ (để tính bình quân ROA/ROE): cột "đầu năm", hoặc kỳ xa nhất trong cửa sổ 4 quý.
+    const bIdx = iDau >= 0 ? iDau : (ps.length >= 4 && end - 3 >= 0 ? end - 3 : -1);
+    const beginCol = bIdx >= 0 && ps[bIdx] ? ps[bIdx].idx : null;
     // Số liệu theo QUÝ + đủ 4 quý → chỉ tiêu dòng chảy lấy TỔNG 4 quý gần nhất (TTM).
-    const end = ps.length ? (periodIdx != null && ps[periodIdx] ? periodIdx : ps.length - 1) : -1;
     const useTTM = periodIdx == null && ps.length >= 4 && ps.slice(-4).every((p) => isQuarter(p.label));
-    const ttmCols = useTTM ? ps.slice(end - 3, end + 1).map((p) => p.idx) : null;
+    const ttmCols = useTTM && end - 3 >= 0 ? ps.slice(end - 3, end + 1).map((p) => p.idx) : null;
     // Loại báo cáo mặc định của sheet (theo tên sheet + vài dòng đầu); có thể đổi giữa chừng.
     let type = detectType(name) || detectType(rows.slice(0, 8).map((r) => r.join(" ")).join(" "));
     // Lưu chuyển tiền tệ ở VN trình bày LŨY KẾ TỪ ĐẦU NĂM (Q2 = 6 tháng), không phải từng quý.
@@ -157,6 +165,15 @@ export function parseBCTC(buf, periodIdx = null) {
       }
       return col != null ? toNumBCTC(row[col]) : null;
     };
+    /** Ghi giá trị + kèm SỐ ĐẦU KỲ (nếu chỉ tiêu đó cần tính bình quân và có cột đầu kỳ). */
+    const put = (field, val, row) => {
+      if (val != null && out[field] == null) out[field] = val;
+      const bf = AVG_BEGIN[field];
+      if (bf && out[bf] == null && beginCol != null) {
+        const bv = toNumBCTC(row[beginCol]);
+        if (bv != null) out[bf] = bv;
+      }
+    };
     for (const row of rows) {
       const t2 = headingType(row);
       if (t2) { type = t2; continue; }                       // dòng tiêu đề báo cáo → đổi vùng
@@ -168,10 +185,7 @@ export function parseBCTC(buf, periodIdx = null) {
         const field = useMap[code];
         if (field) {
           matched = true;
-          if (out[field] == null) {
-            const val = col != null ? valAt(row, field) : valueAfter(row, i);
-            if (val != null) out[field] = val;
-          }
+          put(field, col != null ? valAt(row, field) : valueAfter(row, i), row);
         }
       }
       // 2) Không có mã số → dò theo TÊN chỉ tiêu (ô đầu tiên có chữ).
@@ -184,8 +198,7 @@ export function parseBCTC(buf, periodIdx = null) {
           for (const [re, field, rt] of LABEL_RULES) {
             if (type && rt !== type) continue;
             if (out[field] == null && re.test(label)) {
-              const val = col != null ? valAt(row, field) : valueForLabel(row);
-              if (val != null) { out[field] = val; }
+              put(field, col != null ? valAt(row, field) : valueForLabel(row), row);
               break;                                          // mỗi dòng chỉ khớp 1 chỉ tiêu
             }
           }
