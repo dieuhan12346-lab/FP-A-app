@@ -2805,7 +2805,7 @@ function CreditScore() {
                     {FLIST.map((f, i) => {
                       const shown = i < reveal; const Ic = f.icon; const v = sel.f[f.key]; const missing = v == null;
                       const vc = missing ? C_CR.sub : (v >= 75 ? C_CR.green : v >= 55 ? C_CR.gold : v >= 42 ? C_CR.orange : C_CR.red);
-                      const srcLabel = DEMO_MODE ? t(f.srcKey) : (f.key === "payment" ? t("cr.src.real") : t("cr.src.manual"));
+                      const srcLabel = t(f.srcKey);   // nguồn khai báo ngay trong FLIST (công nợ / BCTC)
                       return (
                         <div key={f.key} style={{ opacity: shown ? 1 : 0.32, transition: "opacity .3s" }} className={shown ? "pop" : ""}>
                           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>

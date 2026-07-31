@@ -558,7 +558,7 @@
   "cr.editf.saving": "Saving…",
   "cr.editf.cancel": "Cancel",
   "cr.notset": "not set",
-  "cr.src.real": "real data",
+  "cr.src.real": "receivables",
   "cr.src.manual": "manual",
   "cr.src.bctc": "from statements",
   "cr.imp.btn": "Import Excel (multiple files OK)",
