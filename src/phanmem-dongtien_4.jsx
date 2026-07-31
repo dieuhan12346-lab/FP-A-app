@@ -13,6 +13,7 @@ import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines, setReceivableStatus } from "./lib/cashflow";
 import { fetchTransactions } from "./lib/transactions";
 import { fetchCreditFactors, saveCreditFactors } from "./lib/credit";
+import { parseBCTC } from "./lib/bctcImport";
 import { fetchForecast, sendReminder, getEmailDomain, setupEmailDomain, verifyEmailDomain } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
@@ -2627,6 +2628,20 @@ function CreditScore() {
     try { await saveCreditFactors(company.id, sel.name, editF); setFactorsMap(await fetchCreditFactors(company.id)); setEditF(null); }
     catch (e) { /* noop */ } finally { setSavingF(false); }
   };
+  const bctcFileRef = useRef(null);
+  const [impMsg, setImpMsg] = useState("");
+  const importBCTC = async (file) => {
+    if (!file) return;
+    setImpMsg("");
+    try {
+      const buf = await file.arrayBuffer();
+      const found = parseBCTC(buf);
+      const keys = Object.keys(found);
+      if (!keys.length) { setImpMsg(t("cr.imp.none")); return; }
+      setEditF((prev) => ({ ...prev, financials: { ...(prev?.financials || {}), ...found } }));
+      setImpMsg(t("cr.imp.ok", { n: keys.length }));
+    } catch (e) { setImpMsg(t("cr.imp.err")); }
+  };
 
   const score = sel ? scoreReal_CR(sel.f, FLIST) : 0;
   const g = grade_CR(score);
@@ -2720,7 +2735,12 @@ function CreditScore() {
             {editF && (
               <div style={{ marginTop: 12, padding: "14px 15px", borderRadius: 12, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>{t("cr.editf.title")}</div>
-                <div style={{ fontSize: 11, color: C_CR.sub, marginBottom: 12, lineHeight: 1.5 }}>{t("cr.editf.desc")}</div>
+                <div style={{ fontSize: 11, color: C_CR.sub, marginBottom: 10, lineHeight: 1.5 }}>{t("cr.editf.desc")}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 13 }}>
+                  <input ref={bctcFileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => { importBCTC(e.target.files[0]); e.target.value = ""; }} />
+                  <button className="btn" onClick={() => bctcFileRef.current?.click()} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, fontWeight: 700, fontSize: 12, color: C_CR.cyan, background: C_CR.cyanSoft, border: `1px solid ${C_CR.cyan}44` }}><FileSpreadsheet size={14} />{t("cr.imp.btn")}</button>
+                  {impMsg && <span style={{ fontSize: 11.5, color: C_CR.sub }}>{impMsg}</span>}
+                </div>
                 {BCTC_FIELDS.map((grp) => (
                   <div key={grp.grp} style={{ marginBottom: 11 }}>
                     <div style={{ fontSize: 10, fontWeight: 800, color: C_CR.cyan, marginBottom: 7, letterSpacing: ".04em" }}>{t(grp.grp)}</div>
