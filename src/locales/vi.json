@@ -563,6 +563,8 @@
   "cr.src.bctc": "từ BCTC",
   "cr.imp.btn": "Import Excel BCTC",
   "cr.imp.ok": "Đã đọc {n} chỉ tiêu — soát lại rồi Lưu.",
+  "cr.imp.okPeriod": "Đã đọc {n} chỉ tiêu (kỳ {period}) — soát lại rồi Lưu.",
+  "cr.imp.okTTM": "Đã đọc {n} chỉ tiêu — số phát sinh cộng 4 quý gần nhất (đến {period}), số thời điểm lấy {period}. Soát lại rồi Lưu.",
   "cr.imp.none": "Không đọc được chỉ tiêu nào — kiểm tra file có cột Mã số không, hoặc nhập tay.",
   "cr.imp.err": "Đọc file lỗi — thử lại hoặc nhập tay.",
   "cr.g.liquidity": "Khả năng thanh toán",

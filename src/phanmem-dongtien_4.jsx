@@ -2635,11 +2635,15 @@ function CreditScore() {
     setImpMsg("");
     try {
       const buf = await file.arrayBuffer();
-      const found = parseBCTC(buf);
-      const keys = Object.keys(found);
+      const { values, periods, ttm } = parseBCTC(buf);
+      const keys = Object.keys(values);
       if (!keys.length) { setImpMsg(t("cr.imp.none")); return; }
-      setEditF((prev) => ({ ...prev, financials: { ...(prev?.financials || {}), ...found } }));
-      setImpMsg(t("cr.imp.ok", { n: keys.length }));
+      setEditF((prev) => ({ ...prev, financials: { ...(prev?.financials || {}), ...values } }));
+      // Nhiều kỳ → số thời điểm lấy kỳ mới nhất; số phát sinh cộng 4 quý (TTM) để so được với nhau.
+      const per = periods.length ? periods[periods.length - 1].label : "";
+      setImpMsg(ttm ? t("cr.imp.okTTM", { n: keys.length, period: per })
+        : per ? t("cr.imp.okPeriod", { n: keys.length, period: per })
+        : t("cr.imp.ok", { n: keys.length }));
     } catch (e) { setImpMsg(t("cr.imp.err")); }
   };
 

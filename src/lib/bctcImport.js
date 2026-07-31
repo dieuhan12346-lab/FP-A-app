@@ -57,32 +57,130 @@ function valueAfter(row, codeIdx) {
   return null;
 }
 
+/** Giá trị cho dòng khớp theo TÊN: bỏ qua ô trông giống MÃ SỐ/STT (số nguyên 1–3 chữ số),
+ *  tránh nhặt nhầm "400" ở cột mã làm giá trị. */
+function valueForLabel(row) {
+  let start = -1;
+  for (let j = 0; j < row.length; j++) if (/^\d{1,3}$/.test(String(row[j] ?? "").trim())) start = j;
+  return valueAfter(row, start);
+}
+
 const MAP_OF = { CDKT, KQKD, LCTT };
 
-/** Trả về { tsNganHan, noNganHan, ... } từ buffer Excel. Field nào không tìm thấy thì bỏ trống.
- *  Dò theo TỪNG VÙNG: một sheet có thể chứa cả 3 báo cáo (gặp tiêu đề nào thì đổi bộ mã từ đó). */
-export function parseBCTC(buf) {
+/* Dò theo TÊN chỉ tiêu — cho file không có cột Mã số (bản xuất từ web dữ liệu, báo cáo tự lập).
+   Thứ tự quan trọng: mẫu cụ thể đặt trước để không khớp nhầm dòng tổng quát. */
+const LABEL_RULES = [
+  // KQKD
+  [/doanh thu thuan/, "doanhThu"],
+  [/gia von hang ban/, "gvhb"],
+  [/chi phi lai vay/, "chiPhiLaiVay"],
+  [/loi nhuan thuan tu hoat dong kinh doanh/, "lnHDKD"],
+  [/loi nhuan sau thue thu nhap doanh nghiep|loi nhuan sau thue(?! cua)/, "lnst"],
+  // LCTT
+  [/luu chuyen tien thuan tu hoat dong kinh doanh/, "dongTienHDKD"],
+  // CĐKT
+  [/tai san ngan han/, "tsNganHan"],
+  [/phai thu (ngan han )?(cua )?khach hang/, "phaiThuKH"],
+  [/hang ton kho/, "hangTonKho"],
+  [/tong (cong )?tai san|tong cong nguon von/, "tongTaiSan"],
+  [/no phai tra/, "tongNo"],
+  [/no ngan han/, "noNganHan"],
+  [/von chu so huu/, "vonCSH"],
+];
+
+const PERIOD_RE = /^(q[1-4]\s*[-/]?\s*\d{4}|\d{4}\s*[-/]?\s*q[1-4]|nam\s*\d{4}|quy\s*[1-4]|\d{4})$|so (cuoi nam|dau nam|cuoi ky)|nam nay|nam truoc/;
+
+/* Dòng TỶ SỐ đã tính sẵn (bảng "Chỉ số tài chính") — KHÔNG phải số liệu gốc.
+   Vd "Tỷ số Nợ trên tổng tài sản" = 35.32 sẽ khớp nhầm thành Tổng tài sản nếu không loại. */
+const RATIO_LABEL_RE = /^(ty so|ty suat|chi so|he so|kha nang thanh toan|kha nang tra|thu nhap tren|gia tri so sach|vong quay|ky thu tien|bien loi nhuan|lai co ban|lai suy giam|eps|bvps|p\/e|p\/b|roa|roe)/;
+/* Khoản mục dễ khớp nhầm: "LNST CHƯA PHÂN PHỐI" là lợi nhuận giữ lại trên Bảng cân đối
+   (số thời điểm), KHÔNG phải LNST trong kỳ của KQKD. Loại trước khi dò theo tên. */
+const LABEL_EXCLUDE = /chua phan phoi|luy ke|du phong|nguoi mua tra tien truoc|tra truoc cho nguoi ban|phai thu noi bo|phai thu khac|phai thu theo tien do/;
+/* Bỏ tiền tố đánh số/mục lục: "A. ", "11. ", "I. ", "D ", "- " … để so khớp đúng phần tên. */
+const stripLead = (s) => s.replace(/^[-•\s]*((so|muc)\s*)?([ivxlcdm]+|[a-z]|\d+)\s*[.)]\s*/i, "").replace(/^[a-z]\s+(?=[a-z])/i, "").trim();
+
+/* Chỉ tiêu DÒNG CHẢY (phát sinh trong kỳ — KQKD/LCTT): số quý phải cộng 4 quý (TTM)
+   mới so được với chỉ tiêu THỜI ĐIỂM của Bảng cân đối. Nếu không, DSO/vòng quay/ROA/ROE sai ~4 lần. */
+const FLOW_FIELDS = new Set(["doanhThu", "gvhb", "chiPhiLaiVay", "lnHDKD", "lnst", "dongTienHDKD"]);
+const isQuarter = (label) => /^q[1-4]\s*[-/]?\s*\d{4}|^\d{4}\s*[-/]?\s*q[1-4]|^quy\s*[1-4]/.test(norm(String(label)));
+
+/** Tìm hàng tiêu đề kỳ (Q3-2025 | 2024 | Số cuối năm…) → [{idx,label}]. */
+export function detectPeriods(rows) {
+  for (const row of rows.slice(0, 12)) {
+    const hits = [];
+    for (let i = 1; i < row.length; i++) {
+      const c = String(row[i] ?? "").trim();
+      if (c && PERIOD_RE.test(norm(c))) hits.push({ idx: i, label: c });
+    }
+    if (hits.length >= 2) return hits;          // ≥2 cột kỳ → là hàng tiêu đề kỳ
+  }
+  return [];
+}
+
+/** Đọc BCTC từ Excel. Trả { values, periods }:
+ *   - values: { tsNganHan, noNganHan, ... } (field nào không thấy thì bỏ trống)
+ *   - periods: các kỳ tìm thấy (file nhiều kỳ theo cột) — UI cho chọn kỳ
+ *  Hai cách dò, bổ trợ nhau: theo MÃ SỐ (mẫu TT200) và theo TÊN chỉ tiêu (file không có mã số).
+ *  Dò theo TỪNG VÙNG: một sheet có thể chứa cả 3 báo cáo (gặp tiêu đề nào thì đổi bộ mã từ đó).
+ *  periodIdx: chỉ số cột kỳ muốn lấy (mặc định: kỳ cuối = mới nhất). */
+export function parseBCTC(buf, periodIdx = null) {
   const wb = XLSX.read(buf, { type: "buffer" });
   const out = {};
+  let periods = [], ttm = false;
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" });
+    const ps = detectPeriods(rows);
+    if (ps.length > periods.length) periods = ps;
+    // Cột giá trị muốn lấy: kỳ người dùng chọn, mặc định kỳ cuối (mới nhất).
+    const col = ps.length ? (periodIdx != null && ps[periodIdx] ? ps[periodIdx].idx : ps[ps.length - 1].idx) : null;
+    // Số liệu theo QUÝ + đủ 4 quý → chỉ tiêu dòng chảy lấy TỔNG 4 quý gần nhất (TTM).
+    const end = ps.length ? (periodIdx != null && ps[periodIdx] ? periodIdx : ps.length - 1) : -1;
+    const useTTM = periodIdx == null && ps.length >= 4 && ps.slice(-4).every((p) => isQuarter(p.label));
+    const ttmCols = useTTM ? ps.slice(end - 3, end + 1).map((p) => p.idx) : null;
+    if (useTTM) ttm = true;
+    const valAt = (row, field) => {
+      if (ttmCols && FLOW_FIELDS.has(field)) {                 // cộng 4 quý cho chỉ tiêu dòng chảy
+        let s = 0, got = false;
+        for (const c of ttmCols) { const v = toNumBCTC(row[c]); if (v != null) { s += v; got = true; } }
+        return got ? Math.round(s * 100) / 100 : null;
+      }
+      return col != null ? toNumBCTC(row[col]) : null;
+    };
     // Loại báo cáo mặc định của sheet (theo tên sheet + vài dòng đầu); có thể đổi giữa chừng.
     let type = detectType(name) || detectType(rows.slice(0, 8).map((r) => r.join(" ")).join(" "));
     for (const row of rows) {
       const t2 = headingType(row);
       if (t2) { type = t2; continue; }                       // dòng tiêu đề báo cáo → đổi vùng
-      // Chưa biết loại → dùng các mã KHÔNG trùng nhau (bỏ mã 20 để không nhầm KQKD/LCTT).
+      // 1) Dò theo mã số. Chưa biết loại báo cáo → chỉ dùng mã KHÔNG trùng (bỏ mã 20).
       const useMap = type ? MAP_OF[type] : { ...CDKT, ...KQKD };
+      let matched = false;
       for (let i = 0; i < row.length; i++) {
         const code = String(row[i] ?? "").trim();
         const field = useMap[code];
-        if (field && out[field] == null) {
-          const val = valueAfter(row, i);
-          if (val != null) out[field] = val;
+        if (field) {
+          matched = true;
+          if (out[field] == null) {
+            const val = col != null ? valAt(row, field) : valueAfter(row, i);
+            if (val != null) out[field] = val;
+          }
+        }
+      }
+      // 2) Không có mã số → dò theo TÊN chỉ tiêu (ô đầu tiên có chữ).
+      if (!matched) {
+        const raw = norm(row.find((c) => String(c ?? "").trim() && !/^-?[\d.,()]+$/.test(String(c).trim())) || "");
+        const label = stripLead(raw);
+        if (label.length >= 6 && !RATIO_LABEL_RE.test(label) && !LABEL_EXCLUDE.test(label)) {   // bỏ dòng tỷ số & khoản dễ nhầm
+          for (const [re, field] of LABEL_RULES) {
+            if (out[field] == null && re.test(label)) {
+              const val = col != null ? valAt(row, field) : valueForLabel(row);
+              if (val != null) { out[field] = val; }
+              break;                                          // mỗi dòng chỉ khớp 1 chỉ tiêu
+            }
+          }
         }
       }
     }
   }
-  return out;
+  return { values: out, periods, ttm };
 }
