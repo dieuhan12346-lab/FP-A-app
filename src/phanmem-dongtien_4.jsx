@@ -2491,16 +2491,29 @@ const REAL_FACTORS_CR = [
 
 /* Mô tả 9 tỷ số để hiển thị chi tiết (giá trị + màu theo điểm). */
 const RATIO_ROWS = [
-  { k: "cr", sk: "crScore", lk: "cr.r.cr", fmt: (v) => v.toFixed(2) },
-  { k: "qr", sk: "qrScore", lk: "cr.r.qr", fmt: (v) => v.toFixed(2) },
-  { k: "da", sk: "daScore", lk: "cr.r.da", fmt: (v) => Math.round(v * 100) + "%" },
-  { k: "icr", sk: "icrScore", lk: "cr.r.icr", fmt: (v) => (v === Infinity ? "∞" : v.toFixed(1)) },
-  { k: "roa", sk: "roaScore", lk: "cr.r.roa", fmt: (v) => Math.round(v * 100) + "%" },
-  { k: "roe", sk: "roeScore", lk: "cr.r.roe", fmt: (v) => Math.round(v * 100) + "%" },
-  { k: "inv", sk: "invScore", lk: "cr.r.inv", fmt: (v) => v.toFixed(1) },
-  { k: "dso", sk: "dsoScore", lk: "cr.r.dso", fmt: (v) => Math.round(v) + "d" },
-  { k: "ocf", sk: "ocfScore", lk: "cr.r.ocf", fmt: (v) => v.toFixed(2) },
+  { k: "cr", sk: "crScore", lk: "cr.r.cr", fmt: (v) => v.toFixed(2), needs: ["tsNganHan", "noNganHan"] },
+  { k: "qr", sk: "qrScore", lk: "cr.r.qr", fmt: (v) => v.toFixed(2), needs: ["tsNganHan", "hangTonKho", "noNganHan"] },
+  { k: "da", sk: "daScore", lk: "cr.r.da", fmt: (v) => Math.round(v * 100) + "%", needs: ["tongNo", "tongTaiSan"] },
+  { k: "icr", sk: "icrScore", lk: "cr.r.icr", fmt: (v) => (v === Infinity ? "∞" : v.toFixed(1)), needs: ["lnHDKD", "chiPhiLaiVay"] },
+  { k: "roa", sk: "roaScore", lk: "cr.r.roa", fmt: (v) => Math.round(v * 100) + "%", needs: ["lnst", "tongTaiSan"] },
+  { k: "roe", sk: "roeScore", lk: "cr.r.roe", fmt: (v) => Math.round(v * 100) + "%", needs: ["lnst", "vonCSH"] },
+  { k: "inv", sk: "invScore", lk: "cr.r.inv", fmt: (v) => v.toFixed(1), needs: ["gvhb", "hangTonKho"] },
+  { k: "dso", sk: "dsoScore", lk: "cr.r.dso", fmt: (v) => Math.round(v) + "d", needs: ["phaiThuKH", "doanhThu"] },
+  { k: "ocf", sk: "ocfScore", lk: "cr.r.ocf", fmt: (v) => v.toFixed(2), needs: ["dongTienHDKD", "noNganHan"] },
 ];
+/* key ô BCTC → nhãn hiển thị, để báo rõ đang thiếu ô nào. */
+const BCTC_LABEL = Object.fromEntries(BCTC_FIELDS.flatMap((g) => g.items));
+/** Ô nào chưa nhập / đang bằng 0 (0 thường là dấu hiệu nhập thiếu, trừ khi DN thật sự lỗ/không có). */
+function finGaps_CR(fin, flist) {
+  const need = new Set(flist.flatMap((r) => r.needs));
+  const missing = [], zero = [];
+  for (const k of need) {
+    const v = fin?.[k];
+    if (v == null || v === "") missing.push(k);
+    else if (Number(v) === 0) zero.push(k);
+  }
+  return { missing, zero };
+}
 
 /* Tính 9 tỷ số + điểm từng tỷ số (chuẩn ngân hàng) + điểm 5 nhóm. Trả {ratios, groups}. */
 function scoreRatios_CR(fin) {
@@ -2833,23 +2846,38 @@ function CreditScore() {
               </div>
             )}
 
-            {/* CHI TIẾT 9 TỶ SỐ (bản thật, có nhập BCTC) */}
-            {phase === "done" && !DEMO_MODE && sel.ratios && Object.keys(sel.ratios).length > 0 && (
-              <div className="pop" style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 11.5, fontWeight: 700, color: C_CR.sub, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Scale size={13} color={C_CR.cyan} />{t("cr.ratios.title")}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(138px, 1fr))", gap: 8 }}>
-                  {RATIO_ROWS.filter((row) => sel.ratios[row.k] != null).map((row) => {
-                    const sc = sel.ratios[row.sk]; const c = sc >= 75 ? C_CR.green : sc >= 55 ? C_CR.gold : sc >= 42 ? C_CR.orange : C_CR.red;
-                    return (
-                      <div key={row.k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 11px", borderRadius: 9, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
-                        <span style={{ fontSize: 10.8, color: C_CR.sub, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t(row.lk)}</span>
-                        <span className="tnum" style={{ fontSize: 12.5, fontWeight: 800, color: c, flex: "0 0 auto" }}>{row.fmt(sel.ratios[row.k])}</span>
-                      </div>
-                    );
-                  })}
+            {/* CHI TIẾT 9 TỶ SỐ — hiện ĐỦ 9, cái nào thiếu dữ liệu thì làm mờ + báo thiếu ô nào */}
+            {phase === "done" && !DEMO_MODE && sel.fin && (() => {
+              const gaps = finGaps_CR(sel.fin, RATIO_ROWS);
+              const nameOf = (k) => (BCTC_LABEL[k] ? t(BCTC_LABEL[k]) : k);
+              return (
+                <div className="pop" style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: C_CR.sub, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Scale size={13} color={C_CR.cyan} />{t("cr.ratios.title")}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(138px, 1fr))", gap: 8 }}>
+                    {RATIO_ROWS.map((row) => {
+                      const val = sel.ratios?.[row.k];
+                      const lack = row.needs.filter((k) => sel.fin[k] == null || sel.fin[k] === "");
+                      const has = val != null;
+                      const sc = sel.ratios?.[row.sk];
+                      const c = !has ? C_CR.sub : sc >= 75 ? C_CR.green : sc >= 55 ? C_CR.gold : sc >= 42 ? C_CR.orange : C_CR.red;
+                      return (
+                        <div key={row.k} title={has ? "" : t("cr.ratios.needFields", { f: lack.map(nameOf).join(", ") })}
+                          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 11px", borderRadius: 9, background: C_CR.panel2, border: `1px dashed ${has ? "transparent" : C_CR.line}`, borderColor: has ? C_CR.line : C_CR.line, opacity: has ? 1 : 0.45 }}>
+                          <span style={{ fontSize: 10.8, color: C_CR.sub, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t(row.lk)}</span>
+                          <span className="tnum" style={{ fontSize: 12.5, fontWeight: 800, color: c, flex: "0 0 auto" }}>{has ? row.fmt(val) : "—"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {(gaps.missing.length > 0 || gaps.zero.length > 0) && (
+                    <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 10, background: C_CR.gold + "12", border: `1px solid ${C_CR.gold}44`, fontSize: 11.3, color: C_CR.txt, lineHeight: 1.55 }}>
+                      {gaps.missing.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}><Info size={12} color={C_CR.gold} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.ratios.missing", { n: gaps.missing.length, f: gaps.missing.map(nameOf).join(" · ") })}</span></div>}
+                      {gaps.zero.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: gaps.missing.length ? 5 : 0 }}><AlertTriangle size={12} color={C_CR.orange} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.ratios.zero", { f: gaps.zero.map(nameOf).join(" · ") })}</span></div>}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* CREDIT LIMIT RECOMMENDATION */}
             {phase === "done" && (
