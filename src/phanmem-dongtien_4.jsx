@@ -2503,6 +2503,11 @@ const RATIO_ROWS = [
 ];
 /* key ô BCTC → nhãn hiển thị, để báo rõ đang thiếu ô nào. */
 const BCTC_LABEL = Object.fromEntries(BCTC_FIELDS.flatMap((g) => g.items));
+/* Mỗi nhóm gồm những tỷ số nào — để biết nhóm đó được tính từ bao nhiêu phần dữ liệu. */
+const GROUP_RATIOS_CR = { liquidity: ["cr", "qr"], leverage: ["da", "icr"], profitability: ["roa", "roe"], efficiency: ["inv", "dso"], cashflow: ["ocf"] };
+/* Điểm quy ước cho phần dữ liệu KHÔNG có. Thiếu minh bạch tài chính thì không được
+   hưởng điểm cao — phần thiếu bị kéo về vùng rủi ro trung bình-cao (chuẩn CIC/ngân hàng). */
+const UNKNOWN_BASE_CR = 45;
 /** Ô nào chưa nhập / đang bằng 0 (0 thường là dấu hiệu nhập thiếu, trừ khi DN thật sự lỗ/không có). */
 function finGaps_CR(fin, flist) {
   const need = new Set(flist.flatMap((r) => r.needs));
@@ -2535,7 +2540,11 @@ function scoreRatios_CR(fin) {
   if (has("dongTienHDKD", "noNganHan") && n("noNganHan") > 0) { const ocf = n("dongTienHDKD") / n("noNganHan"); r.ocf = ocf; r.ocfScore = ocf >= 0.4 ? 92 : ocf >= 0.2 ? 72 : ocf >= 0 ? 52 : 20; }
   const avg = (...ks) => { const vs = ks.map((k) => r[k]).filter((x) => x != null); return vs.length ? Math.round(vs.reduce((a, b) => a + b, 0) / vs.length) : null; };
   const groups = { liquidity: avg("crScore", "qrScore"), leverage: avg("daScore", "icrScore"), profitability: avg("roaScore", "roeScore"), efficiency: avg("invScore", "dsoScore"), cashflow: avg("ocfScore") };
-  return { ratios: r, groups };
+  // Độ phủ dữ liệu từng nhóm = số tỷ số tính được / tổng số tỷ số của nhóm.
+  // Nhóm chỉ có 1/2 tỷ số thì chỉ được HƯỞNG NỬA trọng số (chuẩn CIC/ngân hàng: thiếu dữ liệu → giảm trọng số).
+  const cov = {};
+  for (const [gk, ks] of Object.entries(GROUP_RATIOS_CR)) cov[gk] = ks.filter((k) => r[k] != null).length / ks.length;
+  return { ratios: r, groups, cov };
 }
 
 /* Gộp công nợ theo khách → điểm hành vi thanh toán (payment) thật + điểm 5 nhóm tài chính từ BCTC. */
@@ -2563,23 +2572,36 @@ function buildCreditReal(cfData, factorsMap) {
     const payment = Math.max(5, Math.min(98, Math.round(55 + paidRatio * 35 - overdueRatio * 40 - lateness * 25)));
     const m = factorsMap[key] || {};
     const fin = m.financials || null;
-    const rated = fin ? scoreRatios_CR(fin) : { ratios: null, groups: {} };
+    const rated = fin ? scoreRatios_CR(fin) : { ratios: null, groups: {}, cov: {} };
     const f = { payment };
     for (const [k, v] of Object.entries(rated.groups)) if (v != null) f[k] = v;
+    const cov = { payment: 1, ...(rated.cov || {}) };   // hành vi thanh toán luôn có đủ dữ liệu
     const avgInvoice = g.n > 0 ? g.total / g.n : 0;
     return {
-      id: key, name: g.name, f, fin, ratios: rated.ratios,
+      id: key, name: g.name, f, fin, ratios: rated.ratios, cov,
       requested: Number(m.requested) || 0,
       pay: { total: g.total, paid: g.paid, open: g.open, overdue: g.overdue, maxDays: g.maxDays, n: g.n, paidRatio, overdueRatio, avgInvoice },
       hasFin: !!fin,
     };
   }).sort((a, b) => b.pay.open - a.pay.open);
 }
-/* Điểm tổng: re-chuẩn hoá trọng số CHỈ trên yếu tố có dữ liệu (payment luôn có; nhóm tài chính nếu đã nhập BCTC). */
-function scoreReal_CR(f, flist) {
-  let ws = 0, sum = 0;
-  for (const x of flist) if (f[x.key] != null) { ws += x.w; sum += f[x.key] * x.w; }
-  return ws > 0 ? Math.round(sum / ws) : 0;
+/* Điểm tổng theo chuẩn CIC/ngân hàng khi thiếu dữ liệu:
+   1) Nhóm tính được một phần → chỉ hưởng trọng số tương ứng phần dữ liệu có.
+   2) Phần trọng số KHÔNG có dữ liệu không bị bỏ qua — bị tính ở mức rủi ro trung bình-cao,
+      nên thiếu minh bạch tài chính sẽ KÉO ĐIỂM XUỐNG chứ không trung tính.
+   Trả { score, coverage }. */
+function scoreReal_CR(f, flist, cov) {
+  let effW = 0, sum = 0, totalW = 0;
+  for (const x of flist) {
+    totalW += x.w;
+    if (f[x.key] == null) continue;
+    const w = x.w * (cov?.[x.key] ?? 1);      // nhóm 1/2 tỷ số → nửa trọng số
+    effW += w; sum += f[x.key] * w;
+  }
+  if (effW <= 0) return { score: 0, coverage: 0 };
+  const raw = sum / effW;                      // điểm trên phần dữ liệu CÓ
+  const coverage = totalW > 0 ? effW / totalW : 0;
+  return { score: Math.round(raw * coverage + UNKNOWN_BASE_CR * (1 - coverage)), coverage };
 }
 function weakestReal_CR(f, flist) {
   const present = flist.map((x) => x.key).filter((k) => f[k] != null);
@@ -2672,11 +2694,21 @@ function CreditScore() {
       : t("cr.imp.ok", { n: keys.length }));
   };
 
-  const score = sel ? scoreReal_CR(sel.f, FLIST) : 0;
+  const scored = sel ? scoreReal_CR(sel.f, FLIST, sel.cov) : { score: 0, coverage: 0 };
+  const score = scored.score;
   const g = grade_CR(score);
   const avgInvoice = sel?.pay?.avgInvoice || 0;
   const baseLimit = sel && sel.requested > 0 ? sel.requested : Math.round(avgInvoice * 6);
-  const safeLimit = Math.round(baseLimit * g.ratio / 10) * 10;
+  /* Thiếu dữ liệu tài chính → hạn mức giảm, theo đúng cách ngân hàng xử lý:
+     1) Giảm theo tỷ lệ dữ liệu chứng minh được (thiếu càng nhiều, cấp càng ít).
+     2) Thiếu PHẦN LỚN BCTC → không cấp theo sổ sách nữa, chỉ cấp trong phạm vi
+        DÒNG TIỀN THỰC đã chứng minh = số tiền khách đã thực sự thanh toán. */
+  const covLim = DEMO_MODE ? 1 : scored.coverage;
+  const cashProven = sel?.pay?.paid || 0;
+  let lim = baseLimit * g.ratio * covLim;
+  const cashCapped = !DEMO_MODE && covLim < 0.7 && lim > cashProven;
+  if (cashCapped) lim = cashProven;
+  const safeLimit = Math.round(lim / 10) * 10;
   const reveal = phase === "done" ? FLIST.length : progress;
 
   return (
@@ -2718,7 +2750,7 @@ function CreditScore() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {customers.length === 0 && <div style={{ fontSize: 12, color: C_CR.sub, padding: "8px 2px", lineHeight: 1.5 }}>{t("cr.empty")}</div>}
               {customers.map((p) => {
-                const on = p.id === selId; const pg = grade_CR(scoreReal_CR(p.f, FLIST));
+                const on = p.id === selId; const pg = grade_CR(scoreReal_CR(p.f, FLIST, p.cov).score);
                 const subtitle = DEMO_MODE ? `${t(p.industryKey)} · ${t("cr.revFmt", { n: fmtB_CR(p.revBn) })}` : t("cr.subline", { n: p.pay.n, open: fmtTr_CR(p.pay.open) });
                 return (
                   <button key={p.id} className="btn" onClick={() => pick(p.id)} style={{ textAlign: "left", padding: "11px 12px", borderRadius: 12, background: on ? C_CR.cyanSoft : C_CR.panel2, border: `1px solid ${on ? C_CR.cyan + "66" : C_CR.line}` }}>
@@ -2837,7 +2869,11 @@ function CreditScore() {
                             <div style={{ flex: 1, height: 6, borderRadius: 4, background: "rgba(255,255,255,.07)", overflow: "hidden" }}>
                               <div style={{ width: shown && !missing ? `${v}%` : "0%", height: "100%", background: vc, borderRadius: 4, transition: "width .5s" }} />
                             </div>
-                            <span className="tnum" style={{ fontSize: 9.5, color: C_CR.sub, flex: "0 0 auto", whiteSpace: "nowrap", textAlign: "right" }}>{t("cr.weight", { w: Math.round(f.w * 100) })}</span>
+                            {(() => {                          // tỷ trọng THỰC HƯỞNG: nhóm thiếu tỷ số thì bị giảm
+                              const cv = sel.cov?.[f.key] ?? 1;
+                              const eff = Math.round(f.w * cv * 100), full = Math.round(f.w * 100);
+                              return <span className="tnum" title={cv < 1 ? t("cr.weight.cut", { full }) : ""} style={{ fontSize: 9.5, color: cv < 1 ? C_CR.orange : C_CR.sub, flex: "0 0 auto", whiteSpace: "nowrap", textAlign: "right" }}>{t("cr.weight", { w: eff })}{cv < 1 ? ` (↓${full})` : ""}</span>;
+                            })()}
                           </div>
                         </div>
                       );
@@ -2899,6 +2935,7 @@ function CreditScore() {
                 </div>
                 <div style={{ fontSize: 11.8, color: C_CR.sub, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C_CR.line}`, lineHeight: 1.55 }}>
                   {t("cr.limit.note", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), ratio: Math.round(g.ratio * 100), base: fmtTr_CR(baseLimit), weak: t(weakestReal_CR(sel.f, FLIST)) })}
+                  {cashCapped && <div style={{ marginTop: 5, color: C_CR.red, display: "flex", gap: 6, alignItems: "flex-start" }}><ShieldAlert size={12} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.limit.cashcap", { v: fmtTr_CR(cashProven) })}</span></div>}
                 </div>
                 <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
                   <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)` }}><Check size={15} />{t("cr.apply")}</button>
