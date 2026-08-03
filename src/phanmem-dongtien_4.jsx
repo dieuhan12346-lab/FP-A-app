@@ -2503,7 +2503,9 @@ const RATIO_ROWS = [
 ];
 /* key ô BCTC → nhãn hiển thị, để báo rõ đang thiếu ô nào. */
 const BCTC_LABEL = Object.fromEntries(BCTC_FIELDS.flatMap((g) => g.items));
-/** Ô nào chưa nhập / đang bằng 0 (0 thường là dấu hiệu nhập thiếu, trừ khi DN thật sự lỗ/không có). */
+/* Ô TUỲ CHỌN: trống thì vẫn tính được, nhưng đổi cách tính → phải nói rõ cho người dùng biết. */
+const OPTIONAL_F_CR = ["tongTaiSanDau", "vonCSHDau"];
+/** Ô nào chưa nhập / đang bằng 0 / thiếu số đầu kỳ (0 thường là dấu hiệu nhập thiếu). */
 function finGaps_CR(fin, flist) {
   const need = new Set(flist.flatMap((r) => r.needs));
   const missing = [], zero = [];
@@ -2512,7 +2514,9 @@ function finGaps_CR(fin, flist) {
     if (v == null || v === "") missing.push(k);
     else if (Number(v) === 0) zero.push(k);
   }
-  return { missing, zero };
+  // Thiếu số đầu kỳ → ROA/ROE lùi về số cuối kỳ thay vì bình quân (vẫn ra số, nhưng khác chuẩn NH).
+  const approx = OPTIONAL_F_CR.filter((k) => fin?.[k] == null || fin?.[k] === "");
+  return { missing, zero, approx };
 }
 
 /* Tính 9 tỷ số + điểm từng tỷ số (chuẩn ngân hàng) + điểm 5 nhóm. Trả {ratios, groups}. */
@@ -2869,10 +2873,11 @@ function CreditScore() {
                       );
                     })}
                   </div>
-                  {(gaps.missing.length > 0 || gaps.zero.length > 0) && (
+                  {(gaps.missing.length > 0 || gaps.zero.length > 0 || gaps.approx.length > 0) && (
                     <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 10, background: C_CR.gold + "12", border: `1px solid ${C_CR.gold}44`, fontSize: 11.3, color: C_CR.txt, lineHeight: 1.55 }}>
                       {gaps.missing.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}><Info size={12} color={C_CR.gold} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.ratios.missing", { n: gaps.missing.length, f: gaps.missing.map(nameOf).join(" · ") })}</span></div>}
                       {gaps.zero.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: gaps.missing.length ? 5 : 0 }}><AlertTriangle size={12} color={C_CR.orange} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.ratios.zero", { f: gaps.zero.map(nameOf).join(" · ") })}</span></div>}
+                      {gaps.approx.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: (gaps.missing.length || gaps.zero.length) ? 5 : 0 }}><Info size={12} color={C_CR.sub} style={{ flex: "0 0 auto", marginTop: 2 }} /><span style={{ color: C_CR.sub }}>{t("cr.ratios.approx", { r: gaps.approx.map((k) => t(k === "tongTaiSanDau" ? "cr.r.roa" : "cr.r.roe")).join(", "), f: gaps.approx.map(nameOf).join(" · ") })}</span></div>}
                     </div>
                   )}
                 </div>

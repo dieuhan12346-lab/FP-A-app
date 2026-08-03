@@ -598,6 +598,7 @@
   "cr.ratios.needFields": "Not computed — needs: {f}",
   "cr.ratios.missing": "{n} field(s) not entered, so some ratios are missing: {f}",
   "cr.ratios.zero": "Currently zero (check if that is not the real figure): {f}",
+  "cr.ratios.approx": "{r} computed on ENDING balance (bank standard uses the average) — add: {f}",
   "cr.r.cr": "Current ratio",
   "cr.r.qr": "Quick ratio",
   "cr.r.da": "Debt / Assets",
