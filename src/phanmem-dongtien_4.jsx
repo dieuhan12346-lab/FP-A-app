@@ -2495,17 +2495,15 @@ const RATIO_ROWS = [
   { k: "qr", sk: "qrScore", lk: "cr.r.qr", fmt: (v) => v.toFixed(2), needs: ["tsNganHan", "hangTonKho", "noNganHan"] },
   { k: "da", sk: "daScore", lk: "cr.r.da", fmt: (v) => Math.round(v * 100) + "%", needs: ["tongNo", "tongTaiSan"] },
   { k: "icr", sk: "icrScore", lk: "cr.r.icr", fmt: (v) => (v === Infinity ? "∞" : v.toFixed(1)), needs: ["lnHDKD", "chiPhiLaiVay"] },
-  { k: "roa", sk: "roaScore", lk: "cr.r.roa", fmt: (v) => Math.round(v * 100) + "%", needs: ["lnst", "tongTaiSan"] },
-  { k: "roe", sk: "roeScore", lk: "cr.r.roe", fmt: (v) => Math.round(v * 100) + "%", needs: ["lnst", "vonCSH"] },
+  { k: "roa", sk: "roaScore", lk: "cr.r.roa", fmt: (v) => Math.round(v * 100) + "%", needs: ["lnst", "tongTaiSan", "tongTaiSanDau"] },
+  { k: "roe", sk: "roeScore", lk: "cr.r.roe", fmt: (v) => Math.round(v * 100) + "%", needs: ["lnst", "vonCSH", "vonCSHDau"] },
   { k: "inv", sk: "invScore", lk: "cr.r.inv", fmt: (v) => v.toFixed(1), needs: ["gvhb", "hangTonKho"] },
   { k: "dso", sk: "dsoScore", lk: "cr.r.dso", fmt: (v) => Math.round(v) + "d", needs: ["phaiThuKH", "doanhThu"] },
   { k: "ocf", sk: "ocfScore", lk: "cr.r.ocf", fmt: (v) => v.toFixed(2), needs: ["dongTienHDKD", "noNganHan"] },
 ];
 /* key ô BCTC → nhãn hiển thị, để báo rõ đang thiếu ô nào. */
 const BCTC_LABEL = Object.fromEntries(BCTC_FIELDS.flatMap((g) => g.items));
-/* Ô TUỲ CHỌN: trống thì vẫn tính được, nhưng đổi cách tính → phải nói rõ cho người dùng biết. */
-const OPTIONAL_F_CR = ["tongTaiSanDau", "vonCSHDau"];
-/** Ô nào chưa nhập / đang bằng 0 / thiếu số đầu kỳ (0 thường là dấu hiệu nhập thiếu). */
+/** Ô nào chưa nhập / đang bằng 0 (0 thường là dấu hiệu nhập thiếu, trừ khi DN thật sự lỗ/không có). */
 function finGaps_CR(fin, flist) {
   const need = new Set(flist.flatMap((r) => r.needs));
   const missing = [], zero = [];
@@ -2514,9 +2512,7 @@ function finGaps_CR(fin, flist) {
     if (v == null || v === "") missing.push(k);
     else if (Number(v) === 0) zero.push(k);
   }
-  // Thiếu số đầu kỳ → ROA/ROE lùi về số cuối kỳ thay vì bình quân (vẫn ra số, nhưng khác chuẩn NH).
-  const approx = OPTIONAL_F_CR.filter((k) => fin?.[k] == null || fin?.[k] === "");
-  return { missing, zero, approx };
+  return { missing, zero };
 }
 
 /* Tính 9 tỷ số + điểm từng tỷ số (chuẩn ngân hàng) + điểm 5 nhóm. Trả {ratios, groups}. */
@@ -2528,8 +2524,9 @@ function scoreRatios_CR(fin) {
   if (has("tsNganHan", "hangTonKho", "noNganHan") && n("noNganHan") > 0) { const qr = (n("tsNganHan") - n("hangTonKho")) / n("noNganHan"); r.qr = qr; r.qrScore = qr >= 1 ? 92 : qr >= 0.7 ? 66 : qr >= 0.4 ? 45 : 30; }
   if (has("tongNo", "tongTaiSan") && n("tongTaiSan") > 0) { const da = n("tongNo") / n("tongTaiSan"); r.da = da; r.daScore = da <= 0.4 ? 92 : da <= 0.6 ? 72 : da <= 0.7 ? 48 : 22; }
   if (has("lnHDKD", "chiPhiLaiVay")) { const ci = n("chiPhiLaiVay"); if (ci <= 0) { r.icr = Infinity; r.icrScore = 95; } else { const icr = (n("lnHDKD") + ci) / ci; r.icr = icr; r.icrScore = icr >= 3 ? 95 : icr >= 1.5 ? 66 : icr >= 1 ? 42 : 22; } }
-  // ROA/ROE chuẩn ngân hàng dùng số BÌNH QUÂN (đầu kỳ + cuối kỳ)/2; chưa nhập đầu kỳ → dùng cuối kỳ.
-  const avgOf = (endK, begK) => { const e = n(endK), b = n(begK); return e == null ? null : (b == null ? e : (e + b) / 2); };
+  // ROA/ROE CHỈ dùng số BÌNH QUÂN (đầu kỳ + cuối kỳ)/2 theo chuẩn ngân hàng.
+  // Thiếu một trong hai đầu/cuối kỳ → KHÔNG tính (không lùi về số cuối kỳ để tránh số sai lệch).
+  const avgOf = (endK, begK) => { const e = n(endK), b = n(begK); return e == null || b == null ? null : (e + b) / 2; };
   const taBq = avgOf("tongTaiSan", "tongTaiSanDau"), vcshBq = avgOf("vonCSH", "vonCSHDau");
   if (n("lnst") != null && taBq > 0) { const roa = n("lnst") / taBq; r.roa = roa; r.roaScore = roa >= 0.10 ? 92 : roa >= 0.05 ? 72 : roa >= 0.02 ? 52 : roa >= 0 ? 35 : 15; }
   if (n("lnst") != null && vcshBq > 0) { const roe = n("lnst") / vcshBq; r.roe = roe; r.roeScore = roe >= 0.20 ? 92 : roe >= 0.12 ? 74 : roe >= 0.06 ? 55 : roe >= 0 ? 35 : 15; }
@@ -2873,11 +2870,10 @@ function CreditScore() {
                       );
                     })}
                   </div>
-                  {(gaps.missing.length > 0 || gaps.zero.length > 0 || gaps.approx.length > 0) && (
+                  {(gaps.missing.length > 0 || gaps.zero.length > 0) && (
                     <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 10, background: C_CR.gold + "12", border: `1px solid ${C_CR.gold}44`, fontSize: 11.3, color: C_CR.txt, lineHeight: 1.55 }}>
                       {gaps.missing.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}><Info size={12} color={C_CR.gold} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.ratios.missing", { n: gaps.missing.length, f: gaps.missing.map(nameOf).join(" · ") })}</span></div>}
                       {gaps.zero.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: gaps.missing.length ? 5 : 0 }}><AlertTriangle size={12} color={C_CR.orange} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.ratios.zero", { f: gaps.zero.map(nameOf).join(" · ") })}</span></div>}
-                      {gaps.approx.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: (gaps.missing.length || gaps.zero.length) ? 5 : 0 }}><Info size={12} color={C_CR.sub} style={{ flex: "0 0 auto", marginTop: 2 }} /><span style={{ color: C_CR.sub }}>{t("cr.ratios.approx", { r: gaps.approx.map((k) => t(k === "tongTaiSanDau" ? "cr.r.roa" : "cr.r.roe")).join(", "), f: gaps.approx.map(nameOf).join(" · ") })}</span></div>}
                     </div>
                   )}
                 </div>

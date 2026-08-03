@@ -598,7 +598,6 @@
   "cr.ratios.needFields": "Chưa tính được — cần nhập: {f}",
   "cr.ratios.missing": "Còn {n} ô chưa nhập nên chưa tính đủ chỉ số: {f}",
   "cr.ratios.zero": "Đang để bằng 0 (kiểm tra lại nếu không phải số thật): {f}",
-  "cr.ratios.approx": "{r} đang tính theo số CUỐI kỳ (chuẩn ngân hàng dùng bình quân) — nhập thêm: {f}",
   "cr.r.cr": "TT hiện hành",
   "cr.r.qr": "TT nhanh",
   "cr.r.da": "Nợ / Tổng TS",
