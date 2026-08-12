@@ -12,7 +12,7 @@ import { loadAccounts, accountName } from "./lib/accounts";
 import { chartFor, booksCurrencyFor } from "./lib/regionDefaults";
 import { fetchCashflowData, addReceivablesFromInvoiceLines, setReceivableStatus } from "./lib/cashflow";
 import { fetchTransactions } from "./lib/transactions";
-import { fetchCreditFactors, saveCreditFactors } from "./lib/credit";
+import { fetchCreditFactors, saveCreditFactors, saveCreditDecision } from "./lib/credit";
 import { parseBCTC } from "./lib/bctcImport";
 import { fetchForecast, sendReminder, getEmailDomain, setupEmailDomain, verifyEmailDomain } from "./lib/forecastApi";
 import CashflowDataModal from "./CashflowDataModal";
@@ -2579,6 +2579,8 @@ function buildCreditReal(cfData, factorsMap) {
     const avgInvoice = g.n > 0 ? g.total / g.n : 0;
     return {
       id: key, name: g.name, f, fin, ratios: rated.ratios, cov,
+      approvedLimit: m.approvedLimit ?? null, approvedAt: m.approvedAt || null,
+      approvedScore: m.approvedScore ?? null, reviewAt: m.reviewAt || null,
       requested: Number(m.requested) || 0,
       pay: { total: g.total, paid: g.paid, open: g.open, overdue: g.overdue, maxDays: g.maxDays, n: g.n, paidRatio, overdueRatio, avgInvoice },
       hasFin: !!fin,
@@ -2667,6 +2669,29 @@ function CreditScore() {
     try { await saveCreditFactors(company.id, sel.name, editF); setFactorsMap(await fetchCreditFactors(company.id)); setEditF(null); }
     catch (e) { /* noop */ } finally { setSavingF(false); }
   };
+  // Quyết định tín dụng: duyệt hạn mức + đặt lịch rà soát (lưu vào credit_factors).
+  const [decBusy, setDecBusy] = useState("");
+  const [reviewForm, setReviewForm] = useState(null);   // ngày rà soát đang chọn (chuỗi yyyy-mm-dd)
+  const reloadFactors = async () => { if (company?.id) setFactorsMap(await fetchCreditFactors(company.id)); };
+  const applyLimit = async () => {
+    if (!sel || !company?.id) return;
+    setDecBusy("apply");
+    try { await saveCreditDecision(company.id, sel.name, { approvedLimit: safeLimit, approvedScore: score }); await reloadFactors(); }
+    catch (e) { /* noop */ } finally { setDecBusy(""); }
+  };
+  /* Chu kỳ rà soát theo mức rủi ro: hạng càng thấp càng phải soát lại sớm. */
+  const suggestReview = () => {
+    const months = score >= 80 ? 12 : score >= 68 ? 6 : score >= 55 ? 3 : 1;
+    const d = new Date(); d.setMonth(d.getMonth() + months);
+    return fmtLocalDate(d);
+  };
+  const saveReview = async (dateStr) => {
+    if (!sel || !company?.id) return;
+    setDecBusy("review");
+    try { await saveCreditDecision(company.id, sel.name, { reviewAt: dateStr }); await reloadFactors(); setReviewForm(null); }
+    catch (e) { /* noop */ } finally { setDecBusy(""); }
+  };
+
   const bctcFileRef = useRef(null);
   const [impMsg, setImpMsg] = useState("");
   // Nhận NHIỀU file cùng lúc (CĐKT + KQKD + LCTT) — mỗi file điền phần của nó, cộng dồn.
@@ -2937,10 +2962,43 @@ function CreditScore() {
                   {t("cr.limit.note", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), ratio: Math.round(g.ratio * 100), base: fmtTr_CR(baseLimit), weak: t(weakestReal_CR(sel.f, FLIST)) })}
                   {cashCapped && <div style={{ marginTop: 5, color: C_CR.red, display: "flex", gap: 6, alignItems: "flex-start" }}><ShieldAlert size={12} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.limit.cashcap", { v: fmtTr_CR(cashProven) })}</span></div>}
                 </div>
-                <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
-                  <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)` }}><Check size={15} />{t("cr.apply")}</button>
-                  <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 700, fontSize: 13, color: C_CR.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}` }}><Clock size={14} />{t("cr.schedule")}</button>
+                <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" }}>
+                  <button className="btn" onClick={applyLimit} disabled={DEMO_MODE || decBusy === "apply"} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)`, opacity: decBusy === "apply" ? 0.7 : 1 }}><Check size={15} />{decBusy === "apply" ? t("cr.apply.saving") : t("cr.apply")}</button>
+                  {reviewForm == null ? (
+                    <button className="btn" onClick={() => setReviewForm(sel.reviewAt || suggestReview())} disabled={DEMO_MODE} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 700, fontSize: 13, color: C_CR.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}` }}><Clock size={14} />{t("cr.schedule")}</button>
+                  ) : (
+                    <>
+                      <input type="date" value={reviewForm} onChange={(e) => setReviewForm(e.target.value)} className="tnum" style={{ padding: "9px 11px", borderRadius: 10, background: C_CR.panel2, border: `1px solid ${C_CR.line}`, color: C_CR.txt, fontSize: 12.5, outline: "none", fontFamily: "inherit" }} />
+                      <button className="btn" onClick={() => saveReview(reviewForm)} disabled={decBusy === "review"} style={{ padding: "10px 14px", borderRadius: 10, fontWeight: 700, fontSize: 12.5, color: "#06202f", background: C_CR.cyan, opacity: decBusy === "review" ? 0.7 : 1 }}>{decBusy === "review" ? t("cr.editf.saving") : t("cr.editf.save")}</button>
+                      <button className="btn" onClick={() => setReviewForm(null)} style={{ padding: "10px 12px", borderRadius: 10, fontSize: 12.5, color: C_CR.sub, background: "transparent", border: `1px solid ${C_CR.line}` }}>{t("cr.editf.cancel")}</button>
+                    </>
+                  )}
                 </div>
+                {/* Trạng thái đã duyệt + lịch rà soát + cảnh báo vượt hạn mức */}
+                {!DEMO_MODE && (sel.approvedLimit != null || sel.reviewAt) && (() => {
+                  const over = sel.approvedLimit != null && sel.pay.open > sel.approvedLimit;
+                  const stale = sel.approvedScore != null && Math.abs(sel.approvedScore - score) >= 5;
+                  const due = sel.reviewAt && parseLocalDate(sel.reviewAt) <= new Date();
+                  return (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C_CR.line}`, fontSize: 11.5, lineHeight: 1.6, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {sel.approvedLimit != null && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "flex-start", color: over ? C_CR.red : C_CR.sub }}>
+                          {over ? <ShieldAlert size={12} style={{ flex: "0 0 auto", marginTop: 3 }} /> : <ShieldCheck size={12} color={C_CR.green} style={{ flex: "0 0 auto", marginTop: 3 }} />}
+                          <span>{t("cr.approved", { v: fmtTr_CR(sel.approvedLimit), d: (sel.approvedAt || "").slice(0, 10) })}
+                            {over && <b> · {t("cr.approved.over", { v: fmtTr_CR(sel.pay.open - sel.approvedLimit), open: fmtTr_CR(sel.pay.open) })}</b>}
+                            {!over && stale && <span style={{ color: C_CR.gold }}> · {t("cr.approved.stale", { old: sel.approvedScore, now: score })}</span>}
+                          </span>
+                        </div>
+                      )}
+                      {sel.reviewAt && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "flex-start", color: due ? C_CR.orange : C_CR.sub }}>
+                          <Clock size={12} style={{ flex: "0 0 auto", marginTop: 3 }} />
+                          <span>{t(due ? "cr.review.due" : "cr.review.next", { d: sel.reviewAt })}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
             </>)}

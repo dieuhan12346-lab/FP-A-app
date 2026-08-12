@@ -10,7 +10,7 @@ export async function fetchCreditFactors(companyId) {
   if (!supabase || !companyId) return {};
   const { data, error } = await supabase
     .from("credit_factors")
-    .select("customer, requested, financials")
+    .select("customer, requested, financials, approved_limit, approved_at, approved_score, review_at")
     .eq("company_id", companyId);
   if (error) throw error;
   const map = {};
@@ -18,9 +18,28 @@ export async function fetchCreditFactors(companyId) {
     map[normKey(r.customer)] = {
       requested: r.requested == null ? "" : Number(r.requested),
       financials: r.financials || null,
+      approvedLimit: r.approved_limit == null ? null : Number(r.approved_limit),
+      approvedAt: r.approved_at || null,
+      approvedScore: r.approved_score == null ? null : Number(r.approved_score),
+      reviewAt: r.review_at || null,
     };
   }
   return map;
+}
+
+/** Lưu quyết định tín dụng: duyệt hạn mức và/hoặc đặt lịch rà soát lại. */
+export async function saveCreditDecision(companyId, customer, { approvedLimit, approvedScore, reviewAt } = {}) {
+  if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
+  if (!companyId) throw new Error("Chưa xác định được hồ sơ công ty");
+  const row = { company_id: companyId, customer, updated_at: new Date().toISOString() };
+  if (approvedLimit !== undefined) {
+    row.approved_limit = approvedLimit == null ? null : Number(approvedLimit);
+    row.approved_at = approvedLimit == null ? null : new Date().toISOString();
+    row.approved_score = approvedScore == null ? null : Number(approvedScore);
+  }
+  if (reviewAt !== undefined) row.review_at = reviewAt || null;
+  const { error } = await supabase.from("credit_factors").upsert(row, { onConflict: "company_id,customer" });
+  if (error) throw error;
 }
 
 /** Lưu (upsert) cho 1 khách. fields: { requested, financials:{...các mã số BCTC} }. */
