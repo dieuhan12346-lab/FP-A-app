@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Plus, ArrowLeft, Pencil, Building2, Check, Download } from "lucide-react";
+import { X, Plus, ArrowLeft, Pencil, Building2, Check, Download, Users, Trash2, Mail } from "lucide-react";
 import { useCompany } from "./CompanyContext";
 import { updateCompanySettings, createCompany, listMyCompanies, switchCompany } from "./lib/company";
 import { exportCompanyData, downloadJson } from "./lib/dataExport";
+import { ROLES, myRole, listMembers, listInvites, inviteMember, cancelInvite, changeRole, removeMember } from "./lib/members";
 import CompanyForm from "./CompanyForm";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", red: "#F26D6D" };
@@ -31,6 +32,33 @@ export default function CompanySettingsModal({ onClose }) {
     } catch (ex) { setErr(ex.message); }
     finally { setExporting(false); }
   };
+
+  // ── Thành viên & lời mời ──
+  const [role, setRole] = useState(null);          // vai của chính mình trong công ty đang chọn
+  const [members, setMembers] = useState([]);
+  const [invites, setInvites] = useState([]);
+  const [invEmail, setInvEmail] = useState("");
+  const [invRole, setInvRole] = useState("editor");
+  const [mBusy, setMBusy] = useState("");
+
+  const reloadMembers = async () => {
+    if (!company?.id) return;
+    setRole(await myRole(company.id));
+    try { setMembers(await listMembers(company.id)); } catch { setMembers([]); }
+    try { setInvites(await listInvites(company.id)); } catch { setInvites([]); }
+  };
+  useEffect(() => { reloadMembers(); }, [company?.id]);
+
+  const runM = async (key, fn) => {
+    setMBusy(key); setErr("");
+    try { await fn(); await reloadMembers(); }
+    catch (ex) { setErr(ex.message); }
+    finally { setMBusy(""); }
+  };
+  const doInvite = () => runM("invite", async () => {
+    await inviteMember(company.id, invEmail, invRole);
+    setInvEmail("");
+  });
 
   useEffect(() => {
     listMyCompanies().then(setCompanies).catch((ex) => { setCompanies([]); setErr(ex.message); });
@@ -124,6 +152,76 @@ export default function CompanySettingsModal({ onClose }) {
             <button onClick={() => setMode("create")} style={{ width: "100%", marginTop: 14, padding: "11px 0", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13, color: C.green, background: "transparent", border: `1px dashed ${C.green}66`, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: "inherit" }}>
               <Plus size={15} />{t("settings.newProfile")}
             </button>
+
+            {/* Thành viên công ty — chỉ owner quản được.
+                Ẩn hẳn nếu cơ sở dữ liệu chưa có bảng phân vai (bản cũ) để không hiện khối rỗng. */}
+            {(members.length > 0 || role) && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+                <Users size={15} color={C.sub} />
+                <span style={{ fontSize: 13, fontWeight: 700 }}>{t("mem.title")}</span>
+                <span style={{ fontSize: 11, color: C.sub }}>· {members.length}</span>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {members.map((m) => (
+                  <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 9, background: C.panel2, border: `1px solid ${C.line}` }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.email || m.user_id.slice(0, 8) + "…"}</span>
+                    {role === "owner" ? (
+                      <select value={m.role} disabled={mBusy === "role" + m.user_id}
+                        onChange={(e) => runM("role" + m.user_id, () => changeRole(company.id, m.user_id, e.target.value))}
+                        style={{ padding: "5px 8px", borderRadius: 7, fontSize: 11.5, color: C.txt, background: "rgba(255,255,255,.06)", border: `1px solid ${C.line}`, fontFamily: "inherit" }}>
+                        {ROLES.map((r) => <option key={r} value={r}>{t("mem.role." + r)}</option>)}
+                      </select>
+                    ) : (
+                      <span style={{ fontSize: 11.5, color: C.sub }}>{t("mem.role." + m.role)}</span>
+                    )}
+                    {role === "owner" && members.length > 1 && (
+                      <button onClick={() => runM("del" + m.user_id, () => removeMember(company.id, m.user_id, m.email))}
+                        title={t("mem.remove")} disabled={mBusy === "del" + m.user_id}
+                        style={{ display: "grid", placeItems: "center", width: 26, height: 26, borderRadius: 7, border: "none", cursor: "pointer", color: C.red, background: "transparent" }}>
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {role === "owner" && (
+                <>
+                  {invites.length > 0 && (
+                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {invites.map((i) => (
+                        <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 9, background: "transparent", border: `1px dashed ${C.line}` }}>
+                          <Mail size={12} color={C.sub} style={{ flex: "0 0 auto" }} />
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.email}</span>
+                          <span style={{ fontSize: 11, color: C.sub, flex: "0 0 auto" }}>{t("mem.role." + i.role)} · {t("mem.pending")}</span>
+                          <button onClick={() => runM("inv" + i.id, () => cancelInvite(i.id))} title={t("mem.cancelInvite")}
+                            style={{ display: "grid", placeItems: "center", width: 24, height: 24, borderRadius: 6, border: "none", cursor: "pointer", color: C.sub, background: "transparent" }}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 7, marginTop: 9, flexWrap: "wrap" }}>
+                    <input type="email" value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder={t("mem.invite.ph")}
+                      style={{ flex: "1 1 160px", minWidth: 0, padding: "8px 11px", borderRadius: 9, fontSize: 12.5, color: C.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C.line}`, outline: "none", fontFamily: "inherit" }} />
+                    <select value={invRole} onChange={(e) => setInvRole(e.target.value)}
+                      style={{ padding: "8px 10px", borderRadius: 9, fontSize: 12.5, color: C.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C.line}`, fontFamily: "inherit" }}>
+                      {ROLES.map((r) => <option key={r} value={r}>{t("mem.role." + r)}</option>)}
+                    </select>
+                    <button onClick={doInvite} disabled={mBusy === "invite" || !invEmail.trim()}
+                      style={{ padding: "8px 15px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, color: "#06251a", background: C.green, opacity: mBusy === "invite" || !invEmail.trim() ? 0.6 : 1, fontFamily: "inherit" }}>
+                      {mBusy === "invite" ? t("mem.inviting") : t("mem.invite")}
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 7, fontSize: 11, color: C.sub, lineHeight: 1.5 }}>{t("mem.invite.hint")}</div>
+                </>
+              )}
+            </div>
+            )}
 
             {/* Xuất toàn bộ dữ liệu công ty — quyền mang theo dữ liệu, và để giữ bản sao khi rời dịch vụ */}
             <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>

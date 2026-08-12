@@ -854,5 +854,22 @@
   "auth.noAccount": "No account yet? ",
   "auth.haveAccount": "Already have an account? ",
   "auth.signupNotice": "Account created — check your email to confirm, then sign in.",
-  "auth.err.badCredentials": "Wrong email or password"
+  "auth.err.badCredentials": "Wrong email or password",
+  "mem.title": "Company members",
+  "mem.role.owner": "Owner",
+  "mem.role.editor": "Editor",
+  "mem.role.viewer": "Viewer",
+  "mem.remove": "Remove from company",
+  "mem.pending": "pending",
+  "mem.cancelInvite": "Cancel invite",
+  "mem.invite": "Invite",
+  "mem.inviting": "Inviting…",
+  "mem.invite.ph": "Colleague email",
+  "mem.invite.hint": "They sign in with this exact email, see the invite and join. Invites expire in 14 days.",
+  "join.title": "You have been invited",
+  "join.desc": "An invitation is waiting. Join to share data with that company.",
+  "join.company": "(name unavailable)",
+  "join.btn": "Join",
+  "join.busy": "Joining…",
+  "join.or": "Or create your own company profile:"
 }

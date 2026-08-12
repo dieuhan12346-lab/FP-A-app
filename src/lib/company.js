@@ -71,7 +71,7 @@ export async function createCompany({ name, country, language, currency, statuto
   if (e1) throw e1;
   const { error: e2 } = await supabase
     .from("company_members")
-    .insert({ company_id: company.id, user_id: uid, role: "owner" });
+    .insert({ company_id: company.id, user_id: uid, role: "owner", email: userRes?.user?.email || null });
   if (e2) throw e2;
   // hồ sơ mới trở thành hồ sơ đang dùng (bỏ qua lỗi nếu DB chưa có cột last_used_at)
   await switchCompany(company.id).catch(() => {});

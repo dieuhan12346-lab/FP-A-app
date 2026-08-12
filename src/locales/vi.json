@@ -854,5 +854,22 @@
   "auth.noAccount": "Chưa có tài khoản? ",
   "auth.haveAccount": "Đã có tài khoản? ",
   "auth.signupNotice": "Đã tạo tài khoản — kiểm tra email để xác nhận rồi đăng nhập.",
-  "auth.err.badCredentials": "Sai email hoặc mật khẩu"
+  "auth.err.badCredentials": "Sai email hoặc mật khẩu",
+  "mem.title": "Thành viên công ty",
+  "mem.role.owner": "Chủ sở hữu",
+  "mem.role.editor": "Nhập liệu",
+  "mem.role.viewer": "Chỉ xem",
+  "mem.remove": "Gỡ khỏi công ty",
+  "mem.pending": "chờ tham gia",
+  "mem.cancelInvite": "Huỷ lời mời",
+  "mem.invite": "Mời",
+  "mem.inviting": "Đang mời…",
+  "mem.invite.ph": "Email đồng nghiệp",
+  "mem.invite.hint": "Người được mời đăng nhập bằng đúng email này sẽ thấy lời mời và bấm tham gia. Lời mời có hạn 14 ngày.",
+  "join.title": "Bạn được mời vào công ty",
+  "join.desc": "Có lời mời đang chờ. Bấm tham gia để dùng chung dữ liệu với công ty đó.",
+  "join.company": "(chưa rõ tên)",
+  "join.btn": "Tham gia",
+  "join.busy": "Đang vào…",
+  "join.or": "Hoặc tạo hồ sơ công ty của riêng bạn:"
 }
