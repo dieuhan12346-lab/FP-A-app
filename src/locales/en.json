@@ -620,7 +620,6 @@
   "cr.score.unit": "/ 100 pts",
   "cr.footer": "Scores customers by real payment behavior (from receivables) + manually entered financial factors · transparent weighted model · not credit advice.",
   "cr.port.title": "Portfolio concentration risk",
-  "cr.port.desc": "Per-customer scoring cannot see this: every customer may look fine, yet if the balance sits with a few of them, one default hurts badly.",
   "cr.port.total": "Total outstanding",
   "cr.port.n": "Customers owing",
   "cr.port.top1": "Largest customer",

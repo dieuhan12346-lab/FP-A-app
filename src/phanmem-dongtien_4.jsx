@@ -3040,10 +3040,9 @@ function CreditScore() {
           ];
           return (
             <section className="card" style={{ ...panelCr, marginTop: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 13 }}>
                 <Layers size={16} color={C_CR.violet} /><h3 style={{ ...h3, fontSize: 15 }}>{t("cr.port.title")}</h3>
               </div>
-              <div style={{ fontSize: 11.5, color: C_CR.sub, marginBottom: 13, lineHeight: 1.5 }}>{t("cr.port.desc")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 14 }}>
                 {kpis.map((k, i) => (
                   <div key={i} style={{ padding: "10px 13px", borderRadius: 10, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
