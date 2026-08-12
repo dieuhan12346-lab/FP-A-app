@@ -5,3 +5,6 @@ dist-demo/
 *.local
 .DS_Store
 test-invoice.cjs
+
+# Supabase CLI local link state
+supabase/.temp/

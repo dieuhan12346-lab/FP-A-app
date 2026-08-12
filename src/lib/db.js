@@ -6,9 +6,11 @@ import { supabase } from "./supabase";
  *  Trả về upload id, hoặc null nếu chưa cấu hình. */
 export async function saveInvoiceUpload(fileName, meta, lines, companyId) {
   if (!supabase) return null;
+  // Phân quyền dựa vào company_id — thiếu nó thì dòng lưu xuống sẽ không ai đọc được.
+  if (!companyId) throw new Error("Chưa chọn hồ sơ công ty — không lưu được lô hóa đơn.");
   const { data: up, error: e1 } = await supabase
     .from("invoice_uploads")
-    .insert({ file_name: fileName, header_row: meta.headerRow, cols: meta.cols, mapped: meta.mapped, company_id: companyId || null })
+    .insert({ file_name: fileName, header_row: meta.headerRow, cols: meta.cols, mapped: meta.mapped, company_id: companyId })
     .select("id")
     .single();
   if (e1) throw e1;
