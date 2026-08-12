@@ -2587,6 +2587,27 @@ function buildCreditReal(cfData, factorsMap) {
     };
   }).sort((a, b) => b.pay.open - a.pay.open);
 }
+/* ---- Rủi ro TẬP TRUNG của cả danh mục (chấm điểm từng khách không thấy được) ----
+   20 khách đều hạng A nhưng một khách ôm 60% dư nợ thì vẫn gãy khi khách đó vỡ nợ. */
+const CONC_LIMIT_CR = 0.25;   // ngưỡng an toàn cho MỘT khách trên tổng dư nợ
+function portfolioRisk_CR(customers) {
+  const rows = (customers || [])
+    .map((c) => ({ id: c.id, name: c.name, open: c.pay?.open || 0, approved: c.approvedLimit ?? null }))
+    .filter((r) => r.open > 0)
+    .sort((a, b) => b.open - a.open);
+  const total = rows.reduce((s, r) => s + r.open, 0);
+  if (!total) return null;
+  const list = rows.map((r) => ({ ...r, share: r.open / total }));
+  const hhi = list.reduce((s, r) => s + r.share * r.share, 0);   // Herfindahl: càng cao càng tập trung
+  return {
+    list, total, n: list.length,
+    top1: list[0],
+    top3: list.slice(0, 3).reduce((s, r) => s + r.share, 0),
+    effN: 1 / hhi,                                                // "tương đương bao nhiêu khách" nếu chia đều
+    overCap: list.filter((r) => r.approved != null && r.open > r.approved),
+  };
+}
+
 /* Điểm tổng theo chuẩn CIC/ngân hàng khi thiếu dữ liệu:
    1) Nhóm tính được một phần → chỉ hưởng trọng số tương ứng phần dữ liệu có.
    2) Phần trọng số KHÔNG có dữ liệu không bị bỏ qua — bị tính ở mức rủi ro trung bình-cao,
@@ -2635,6 +2656,7 @@ function CreditScore() {
     fetchCreditFactors(company.id).then(setFactorsMap).catch(() => setFactorsMap({}));
   }, [company?.id]);
   const customers = useMemo(() => (DEMO_MODE ? PARTNERS_CR : buildCreditReal(cfData, factorsMap)), [cfData, factorsMap]);
+  const port = useMemo(() => (DEMO_MODE ? null : portfolioRisk_CR(customers)), [customers]);   // rủi ro tập trung danh mục
   const [selId, setSelId] = useState(null);
   useEffect(() => { setSelId((s) => (customers.find((c) => c.id === s) ? s : customers[0]?.id || null)); }, [customers]);
   const sel = customers.find((c) => c.id === selId) || null;
@@ -3004,6 +3026,56 @@ function CreditScore() {
             </>)}
           </section>
         </div>
+
+        {/* ===== RỦI RO TẬP TRUNG DANH MỤC — chấm điểm từng khách không thấy được ===== */}
+        {port && (() => {
+          const concentrated = port.top1.share > CONC_LIMIT_CR;
+          const top3High = port.top3 > 0.6 && port.n >= 3;
+          const lim = Math.round(CONC_LIMIT_CR * 100);
+          const kpis = [
+            { label: t("cr.port.total"), val: fmtTr_CR(port.total), c: C_CR.txt },
+            { label: t("cr.port.n"), val: String(port.n), c: C_CR.txt },
+            { label: t("cr.port.top1"), val: Math.round(port.top1.share * 100) + "%", c: concentrated ? C_CR.red : C_CR.green },
+            { label: t("cr.port.eff"), val: t("cr.port.effVal", { n: port.effN.toFixed(1) }), c: port.effN < 3 ? C_CR.orange : C_CR.green },
+          ];
+          return (
+            <section className="card" style={{ ...panelCr, marginTop: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Layers size={16} color={C_CR.violet} /><h3 style={{ ...h3, fontSize: 15 }}>{t("cr.port.title")}</h3>
+              </div>
+              <div style={{ fontSize: 11.5, color: C_CR.sub, marginBottom: 13, lineHeight: 1.5 }}>{t("cr.port.desc")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 14 }}>
+                {kpis.map((k, i) => (
+                  <div key={i} style={{ padding: "10px 13px", borderRadius: 10, background: C_CR.panel2, border: `1px solid ${C_CR.line}` }}>
+                    <div style={{ fontSize: 10.5, color: C_CR.sub, marginBottom: 4 }}>{k.label}</div>
+                    <div className="tnum" style={{ fontSize: 16, fontWeight: 800, color: k.c, whiteSpace: "nowrap" }}>{k.val}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {port.list.slice(0, 8).map((r) => {
+                  const c = r.share > CONC_LIMIT_CR ? C_CR.red : r.share > 0.15 ? C_CR.gold : C_CR.cyan;
+                  return (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span style={{ flex: "1 1 0", minWidth: 0, fontSize: 11.5, color: C_CR.txt, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={r.name}>{r.name}</span>
+                      <div style={{ flex: "0 0 90px", height: 13, borderRadius: 5, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+                        <div style={{ width: `${Math.max(3, r.share * 100)}%`, height: "100%", borderRadius: 5, background: c }} />
+                      </div>
+                      <span className="tnum" style={{ flex: "0 0 auto", minWidth: 38, textAlign: "right", fontSize: 11.5, fontWeight: 800, color: c }}>{Math.round(r.share * 100)}%</span>
+                      <span className="tnum" style={{ flex: "0 0 auto", minWidth: 62, textAlign: "right", fontSize: 11, color: C_CR.sub }}>{fmtTr_CR(r.open)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 12, paddingTop: 11, borderTop: `1px solid ${C_CR.line}`, fontSize: 11.4, lineHeight: 1.6, display: "flex", flexDirection: "column", gap: 5 }}>
+                {concentrated && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", color: C_CR.red }}><ShieldAlert size={12} style={{ flex: "0 0 auto", marginTop: 3 }} /><span>{t("cr.port.warn1", { name: port.top1.name, p: Math.round(port.top1.share * 100), lim })}</span></div>}
+                {top3High && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", color: C_CR.orange }}><AlertTriangle size={12} style={{ flex: "0 0 auto", marginTop: 3 }} /><span>{t("cr.port.warn3", { p: Math.round(port.top3 * 100) })}</span></div>}
+                {port.overCap.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", color: C_CR.red }}><ShieldAlert size={12} style={{ flex: "0 0 auto", marginTop: 3 }} /><span>{t("cr.port.over", { n: port.overCap.length, names: port.overCap.slice(0, 3).map((r) => r.name).join(", ") })}</span></div>}
+                {!concentrated && !top3High && port.overCap.length === 0 && <div style={{ display: "flex", gap: 6, alignItems: "flex-start", color: C_CR.green }}><ShieldCheck size={12} style={{ flex: "0 0 auto", marginTop: 3 }} /><span>{t("cr.port.ok", { lim })}</span></div>}
+              </div>
+            </section>
+          );
+        })()}
 
         <footer style={{ marginTop: 18, fontSize: 11.5, color: C_CR.sub, textAlign: "center", lineHeight: 1.6 }}>
           {t("cr.footer")}
