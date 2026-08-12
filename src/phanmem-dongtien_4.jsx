@@ -3050,6 +3050,12 @@ function CreditScore() {
                   </div>
                 ))}
               </div>
+              {/* tên cột — bề rộng khớp hàng dữ liệu bên dưới (bar 90 + gap 9 + % 38 = 137) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 10, fontWeight: 800, color: C_CR.sub, letterSpacing: ".03em", paddingBottom: 7 }}>
+                <span style={{ flex: "1 1 0", minWidth: 0 }}>{t("cr.port.th.name")}</span>
+                <span style={{ flex: "0 0 137px", textAlign: "right" }}>{t("cr.port.th.share")}</span>
+                <span style={{ flex: "0 0 auto", minWidth: 62, textAlign: "right" }}>{t("cr.port.th.open")}</span>
+              </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                 {port.list.slice(0, 8).map((r) => {
                   const c = r.share > CONC_LIMIT_CR ? C_CR.red : r.share > 0.15 ? C_CR.gold : C_CR.cyan;
