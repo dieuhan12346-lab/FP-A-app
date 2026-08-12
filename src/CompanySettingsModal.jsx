@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Plus, ArrowLeft, Pencil, Building2, Check } from "lucide-react";
+import { X, Plus, ArrowLeft, Pencil, Building2, Check, Download } from "lucide-react";
 import { useCompany } from "./CompanyContext";
 import { updateCompanySettings, createCompany, listMyCompanies, switchCompany } from "./lib/company";
+import { exportCompanyData, downloadJson } from "./lib/dataExport";
 import CompanyForm from "./CompanyForm";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", red: "#F26D6D" };
@@ -15,6 +16,21 @@ export default function CompanySettingsModal({ onClose }) {
   const [companies, setCompanies] = useState(null); // null = đang tải
   const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState("");
+
+  /** Tải toàn bộ dữ liệu công ty hiện tại về máy dưới dạng JSON. */
+  const doExport = async () => {
+    setExporting(true); setExportMsg(""); setErr("");
+    try {
+      const data = await exportCompanyData(company.id);
+      const slug = String(company.name || "cong-ty").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+      downloadJson(data, `luxora-${slug}-${new Date().toISOString().slice(0, 10)}.json`);
+      const n = Object.values(data.summary || {}).reduce((s, v) => s + v, 0);
+      setExportMsg(t("settings.export.done", { n }));
+    } catch (ex) { setErr(ex.message); }
+    finally { setExporting(false); }
+  };
 
   useEffect(() => {
     listMyCompanies().then(setCompanies).catch((ex) => { setCompanies([]); setErr(ex.message); });
@@ -108,6 +124,14 @@ export default function CompanySettingsModal({ onClose }) {
             <button onClick={() => setMode("create")} style={{ width: "100%", marginTop: 14, padding: "11px 0", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13, color: C.green, background: "transparent", border: `1px dashed ${C.green}66`, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: "inherit" }}>
               <Plus size={15} />{t("settings.newProfile")}
             </button>
+
+            {/* Xuất toàn bộ dữ liệu công ty — quyền mang theo dữ liệu, và để giữ bản sao khi rời dịch vụ */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+              <button onClick={doExport} disabled={exporting} style={{ width: "100%", padding: "10px 0", borderRadius: 10, cursor: exporting ? "default" : "pointer", fontWeight: 700, fontSize: 12.5, color: C.txt, background: C.panel2, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: "inherit", opacity: exporting ? 0.7 : 1 }}>
+                <Download size={14} />{exporting ? t("settings.export.busy") : t("settings.export")}
+              </button>
+              <div style={{ marginTop: 7, fontSize: 11, color: exportMsg ? C.green : C.sub, lineHeight: 1.5 }}>{exportMsg || t("settings.export.hint")}</div>
+            </div>
           </>
         )}
 
