@@ -2787,7 +2787,6 @@ function CreditScore() {
               <div style={{ fontSize: 12.5, color: C_CR.sub, marginTop: 1 }}>{t("cr.subtitle")}</div>
             </div>
           </div>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: C_CR.violet, background: C_CR.violetSoft, padding: "7px 13px", borderRadius: 20 }}><Bot size={13} />{t("cr.badge")}</span>
         </header>
 
         <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0,250px) minmax(0,1fr)" }}>
@@ -4045,7 +4044,7 @@ const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
   { id: "fpa", key: "fpa", icon: Brain, c: C.cyan },
   { id: "ops", key: "ops", icon: Bot, c: C.green, demo: true },
-  { id: "credit", key: "credit", icon: Gauge, c: C.violet, demo: true },
+  { id: "credit", key: "credit", icon: Gauge, c: C.violet },
   { id: "collect", key: "collect", icon: Bell, c: C.orange },
   { id: "invoice", key: "invoice", icon: Receipt, c: C.green },
   { id: "pricing", key: "pricing", icon: TagIcon, c: C.cyan },
