@@ -68,7 +68,7 @@ Dữ liệu **được lưu trữ ngoài lãnh thổ Việt Nam**:
 
 | Hệ thống | Vai trò | Khu vực |
 |---|---|---|
-| Supabase (PostgreSQL trên AWS) | Toàn bộ cơ sở dữ liệu | Ngoài Việt Nam — xem xác nhận vùng tại bảng điều khiển Supabase |
+| Supabase (PostgreSQL trên AWS) | Toàn bộ cơ sở dữ liệu | **Sydney, Úc** — AWS vùng `ap-southeast-2` |
 | Railway | Dịch vụ dự báo & gửi thư (không lưu trữ dữ liệu) | Ngoài Việt Nam |
 | Resend | Gửi email; lưu nhật ký và **nội dung thư đã gửi** | Hoa Kỳ |
 | Vercel | Máy chủ giao diện (không lưu dữ liệu ứng dụng) | Toàn cầu (CDN) |

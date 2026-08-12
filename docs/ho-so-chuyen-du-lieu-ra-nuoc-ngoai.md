@@ -35,7 +35,7 @@
 
 | Bên tiếp nhận | Vai trò | Dữ liệu nhận | Khu vực lưu trữ |
 |---|---|---|---|
-| **Supabase** (nền tảng cơ sở dữ liệu, chạy trên AWS) | Lưu trữ toàn bộ cơ sở dữ liệu | Tất cả dữ liệu tại Mục B | Ngoài Việt Nam — *[CẦN XÁC NHẬN vùng cụ thể tại bảng điều khiển Supabase → Settings → General → Region]* |
+| **Supabase** (nền tảng cơ sở dữ liệu, chạy trên AWS) | Lưu trữ toàn bộ cơ sở dữ liệu | Tất cả dữ liệu tại Mục B | **Sydney, Úc** — AWS vùng `ap-southeast-2` |
 | **Railway** | Chạy dịch vụ dự báo dòng tiền và gửi thư nhắc nợ. **Không lưu trữ dữ liệu** — chỉ đọc, tính toán, trả kết quả | Đọc giao dịch, công nợ; ghi nhật ký gửi thư | Ngoài Việt Nam |
 | **Resend** | Gửi email nhắc thanh toán. **Có lưu nhật ký và nội dung thư đã gửi** trên hệ thống của họ | Địa chỉ email người nhận, tiêu đề và nội dung thư | Hoa Kỳ |
 | **Vercel** | Máy chủ giao diện web. Không lưu dữ liệu ứng dụng | Không | Mạng phân phối toàn cầu |
@@ -43,6 +43,17 @@
 
 *[CẦN ĐIỀN: địa chỉ pháp lý và đầu mối liên hệ của từng nhà cung cấp — lấy trong điều khoản dịch vụ
 và phụ lục xử lý dữ liệu của họ.]*
+
+> **Cách xác định vùng Supabase (đã thực hiện):** máy chủ cơ sở dữ liệu
+> `db.krajllyrixcctkqhoxxi.supabase.co` phân giải ra địa chỉ IPv6 `2406:da1c:10e4:6401::…`; đối chiếu
+> bảng dải IP chính thức của AWS (`ip-ranges.amazonaws.com`) thì địa chỉ nằm trong `2406:da1c::/35`
+> thuộc vùng **ap-southeast-2 (Sydney, Úc)**.
+>
+> Đây là suy luận từ hạ tầng mạng. **Nguồn có thẩm quyền là bảng điều khiển Supabase → Settings →
+> General → Region** — nên chụp màn hình làm bằng chứng kèm hồ sơ.
+>
+> Lưu ý: các phản hồi API đi qua Cloudflare nên header có thể hiện điểm cache gần người dùng
+> (ví dụ Singapore) — **đó không phải nơi lưu trữ dữ liệu**.
 
 ---
 
