@@ -30,6 +30,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")                  # dùng cho JWKS + đ�
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 REMINDER_FROM = os.getenv("REMINDER_FROM", "Luxora <onboarding@resend.dev>")
 
+# Địa chỉ app dùng trong thư mời. Sai biến này thì thư mời dẫn người ta đi lạc.
+APP_URL = os.getenv("APP_URL", "https://app.luxorasystem.com")
+
 
 @lru_cache(maxsize=1)
 def _jwks_client():
@@ -79,6 +82,13 @@ class EmailDomainReq(BaseModel):
 
 class CompanyRef(BaseModel):
     company_id: str
+
+
+class SendInviteReq(BaseModel):
+    company_id: str
+    to: str                       # email người được mời (đúng email họ sẽ đăng nhập)
+    role: str = "viewer"          # owner | editor | viewer
+    lang: str = "vi"
 
 
 def _monday(iso: str) -> str:
@@ -169,6 +179,23 @@ def _is_member(company_id: str, user_id: str) -> bool:
     r = httpx.get(
         f"{url}/rest/v1/company_members",
         params={"company_id": f"eq.{company_id}", "user_id": f"eq.{user_id}", "select": "company_id"},
+        headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=20,
+    )
+    if r.status_code != 200:
+        raise HTTPException(502, f"Supabase lỗi: {r.status_code} {r.text[:180]}")
+    return len(r.json()) > 0
+
+
+def _is_owner(company_id: str, user_id: str) -> bool:
+    """Vai owner của công ty. Dùng cho việc quản trị (mời người vào công ty)."""
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        raise HTTPException(501, "Service chưa cấu hình SUPABASE_URL / SUPABASE_SERVICE_KEY")
+    import httpx
+    r = httpx.get(
+        f"{url}/rest/v1/company_members",
+        params={"company_id": f"eq.{company_id}", "user_id": f"eq.{user_id}",
+                "role": "eq.owner", "select": "company_id"},
         headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=20,
     )
     if r.status_code != 200:
@@ -338,6 +365,120 @@ def send_reminder(req: SendReminderReq, user_id: str = Depends(require_user)):
     if not ok:
         raise HTTPException(502, f"Resend lỗi {r.status_code}: {r.text[:200]}")
     return {"ok": True, "id": provider_id}
+
+
+# ---------- Thư mời vào công ty ----------
+
+ROLE_LABELS = {
+    "vi": {"owner": "Chủ sở hữu", "editor": "Nhập liệu", "viewer": "Chỉ xem"},
+    "en": {"owner": "Owner", "editor": "Editor", "viewer": "Viewer"},
+}
+
+
+def _pending_invite(company_id: str, email: str) -> dict | None:
+    """Lời mời còn hiệu lực cho đúng cặp (công ty, email). Trả None nếu không có."""
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        raise HTTPException(501, "Service chưa cấu hình SUPABASE_URL / SUPABASE_SERVICE_KEY")
+    import httpx
+    r = httpx.get(
+        f"{url}/rest/v1/company_invites",
+        params={"company_id": f"eq.{company_id}", "email": f"eq.{email.lower()}",
+                "accepted_at": "is.null", "select": "role,expires_at"},
+        headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=20,
+    )
+    if r.status_code != 200:
+        raise HTTPException(502, f"Supabase lỗi: {r.status_code} {r.text[:180]}")
+    rows = r.json()
+    return rows[0] if rows else None
+
+
+def _member_email(company_id: str, user_id: str) -> str | None:
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return None
+    import httpx
+    try:
+        r = httpx.get(f"{url}/rest/v1/company_members",
+                      params={"company_id": f"eq.{company_id}", "user_id": f"eq.{user_id}", "select": "email"},
+                      headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=20)
+        rows = r.json() if r.status_code == 200 else []
+        return (rows[0] or {}).get("email") if rows else None
+    except Exception:
+        return None
+
+
+@app.post("/send-invite")
+def send_invite(req: SendInviteReq, user_id: str = Depends(require_user)):
+    """Gửi thư mời cho người đã được thêm vào company_invites.
+
+    Chỉ owner gọi được, VÀ chỉ gửi được tới địa chỉ đang có lời mời còn hiệu lực.
+    Ràng buộc thứ hai là quan trọng: thiếu nó thì endpoint này thành công cụ gửi thư
+    tới địa chỉ bất kỳ bằng tài khoản Resend của Luxora.
+    """
+    if not _is_owner(req.company_id, user_id):
+        raise HTTPException(403, "Chỉ Chủ sở hữu công ty mới mời được người khác")
+    if not RESEND_API_KEY:
+        raise HTTPException(501, "Service chưa cấu hình RESEND_API_KEY — thêm biến môi trường trên Railway")
+
+    to = (req.to or "").strip()
+    if "@" not in to or " " in to:
+        raise HTTPException(400, "Email người nhận không hợp lệ")
+
+    inv = _pending_invite(req.company_id, to)
+    if not inv:
+        raise HTTPException(404, "Không có lời mời đang chờ cho email này")
+
+    lang = "en" if (req.lang or "vi").startswith("en") else "vi"
+    company = _company_email_config(req.company_id).get("name") or "công ty"
+    role_lb = ROLE_LABELS[lang].get(inv.get("role") or req.role, inv.get("role") or "")
+    expires = (inv.get("expires_at") or "")[:10]
+    inviter = _member_email(req.company_id, user_id) or ""
+
+    if lang == "en":
+        subject = f"You have been invited to {company} on Luxora"
+        body = (
+            f"{inviter + ' has invited you' if inviter else 'You have been invited'} to join "
+            f"{company} on Luxora with the role {role_lb}.\n\n"
+            f"How to join:\n"
+            f"1. Open {APP_URL}\n"
+            f"2. Sign in with this exact email address: {to}\n"
+            f"3. Click Join on the pending invitation\n\n"
+            f"The invitation expires on {expires}."
+        )
+        footer = "You are receiving this because someone invited you to a company on Luxora. If this was not expected, ignore this email."
+    else:
+        subject = f"Bạn được mời vào {company} trên Luxora"
+        body = (
+            f"{inviter + ' mời bạn' if inviter else 'Bạn được mời'} tham gia {company} "
+            f"trên Luxora với vai {role_lb}.\n\n"
+            f"Cách vào:\n"
+            f"1. Mở {APP_URL}\n"
+            f"2. Đăng nhập bằng đúng địa chỉ email này: {to}\n"
+            f"3. Bấm Tham gia ở lời mời đang chờ\n\n"
+            f"Lời mời hết hạn ngày {expires}."
+        )
+        footer = "Bạn nhận thư này vì có người mời bạn vào một công ty trên Luxora. Nếu không phải, bỏ qua thư này."
+
+    # Gửi từ domain Luxora, KHÔNG dùng domain riêng của khách: đây là thư tài khoản,
+    # dẫn người ta đi đăng nhập — người nhận cần thấy đúng tên miền của dịch vụ.
+    import httpx
+    try:
+        r = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": _from_hdr(f"{company} qua Luxora" if lang == "vi" else f"{company} via Luxora",
+                                    _reminder_addr()),
+                  "to": [to], "subject": subject, "text": body,
+                  "html": _reminder_html(body, footer),
+                  **({"reply_to": inviter} if inviter and "@" in inviter else {})},
+            timeout=30,
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Không gọi được Resend: {e}")
+    if r.status_code not in (200, 201):
+        raise HTTPException(502, f"Resend lỗi {r.status_code}: {r.text[:200]}")
+    return {"ok": True, "id": (r.json() or {}).get("id")}
 
 
 # ---------- Domain gửi email theo từng công ty (option B) ----------

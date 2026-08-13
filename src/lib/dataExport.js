@@ -2,55 +2,40 @@ import { supabase } from "./supabase";
 
 /* Xuất TOÀN BỘ dữ liệu của một công ty ra một tệp JSON.
    Phục vụ quyền truy cập/mang theo dữ liệu, và để khách tự giữ bản sao khi rời dịch vụ.
-   Chỉ đọc — RLS vẫn áp dụng, nên người dùng chỉ xuất được dữ liệu công ty mình thuộc về. */
 
-/** Các bảng gắn trực tiếp company_id. Thêm bảng mới thì khai báo ở đây. */
-const DIRECT_TABLES = [
-  "receivables",
-  "payables",
-  "cashflow_settings",
-  "transactions",
-  "credit_factors",
-  "reminder_log",
-  "invoice_uploads",
-];
+   Việc gom dữ liệu nằm DƯỚI cơ sở dữ liệu (hàm export_company_data), không ở đây.
+   Bản cũ chạy một loạt SELECT ngay trong trình duyệt, nên ẩn nút với người không
+   phải Chủ sở hữu chỉ là che giao diện — mở devtools là gọi lại được. Nay hàm dưới
+   CSDL tự kiểm is_owner() trước khi đọc, và ghi lại mỗi lần xuất vào audit_log. */
 
-/** Gom dữ liệu công ty → object. Bảng nào lỗi/không tồn tại thì ghi rõ thay vì làm hỏng cả bản xuất. */
+/** Gọi hàm xuất phía máy chủ. Ném lỗi nếu người gọi không phải Chủ sở hữu. */
 export async function exportCompanyData(companyId) {
   if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
   if (!companyId) throw new Error("Chưa xác định được hồ sơ công ty");
 
-  const out = {
-    exportedAt: new Date().toISOString(),
-    companyId,
-    note: "Bản xuất dữ liệu công ty từ phần mềm Luxora. Mỗi khoá là một bảng dữ liệu.",
-    tables: {},
-    errors: {},
-  };
-
-  // Hồ sơ công ty
-  const c = await supabase.from("companies").select("*").eq("id", companyId).maybeSingle();
-  if (c.error) out.errors.companies = c.error.message; else out.tables.companies = c.data ? [c.data] : [];
-
-  // Các bảng gắn company_id
-  for (const t of DIRECT_TABLES) {
-    const { data, error } = await supabase.from(t).select("*").eq("company_id", companyId);
-    if (error) out.errors[t] = error.message; else out.tables[t] = data || [];
+  const { data, error } = await supabase.rpc("export_company_data", { cid: companyId });
+  if (error) {
+    // Cố ý KHÔNG lùi về cách gom ở trình duyệt: làm vậy là dựng lại đúng lỗ hổng
+    // vừa bịt. Thiếu hàm thì báo thẳng để người vận hành chạy migration.
+    if (error.code === "PGRST202" || /schema cache|does not exist/i.test(error.message || "")) {
+      throw new Error("Cơ sở dữ liệu chưa có hàm xuất dữ liệu — chạy migration 010_export_audit.sql trước.");
+    }
+    throw error;
   }
+  return data;
+}
 
-  // Dòng hóa đơn: nối qua invoice_uploads của công ty
-  try {
-    const ids = (out.tables.invoice_uploads || []).map((u) => u.id);
-    if (ids.length) {
-      const { data, error } = await supabase.from("invoice_lines").select("*").in("upload_id", ids);
-      if (error) out.errors.invoice_lines = error.message; else out.tables.invoice_lines = data || [];
-    } else out.tables.invoice_lines = [];
-  } catch (e) {
-    out.errors.invoice_lines = String(e?.message || e);
-  }
-
-  out.summary = Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]));
-  return out;
+/** Vài lần xuất gần nhất. Chỉ Chủ sở hữu đọc được (RLS); vai khác nhận mảng rỗng. */
+export async function listAuditLog(companyId, limit = 8) {
+  if (!supabase || !companyId) return [];
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select("id, email, action, detail, created_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];   // cơ sở dữ liệu cũ chưa có bảng — coi như chưa có nhật ký
+  return data || [];
 }
 
 /** Tải object xuống máy dưới dạng tệp JSON. */

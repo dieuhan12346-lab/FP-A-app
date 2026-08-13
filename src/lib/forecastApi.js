@@ -55,6 +55,30 @@ export async function sendReminder(payload) {
   return res.json();
 }
 
+/** Gửi thư mời cho một lời mời ĐÃ tạo trong company_invites.
+ *  Service chỉ gửi tới địa chỉ đang có lời mời còn hiệu lực, nên phải tạo lời mời trước. */
+export async function sendInvite({ companyId, to, role, lang }) {
+  if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error("Chưa đăng nhập");
+  let res;
+  try {
+    res = await fetch(`${FORECAST_URL}/send-invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ company_id: companyId, to, role, lang: lang || "vi" }),
+    });
+  } catch (e) {
+    throw new Error("Không kết nối được dịch vụ gửi email");
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Gửi thư mời lỗi ${res.status}${t ? ": " + t.slice(0, 160) : ""}`);
+  }
+  return res.json();
+}
+
 /* ---- Domain gửi email theo công ty (option B) ---- */
 async function svcFetch(path, { method = "GET", body } = {}) {
   if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");

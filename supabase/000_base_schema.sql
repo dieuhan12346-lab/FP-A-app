@@ -222,6 +222,18 @@ create table if not exists public.reminder_log (
 );
 create index if not exists reminder_log_company_idx on public.reminder_log (company_id, created_at desc);
 
+-- Nhật ký thao tác nhạy cảm (xuất toàn bộ dữ liệu…). Chỉ hàm SECURITY DEFINER ghi.
+create table if not exists public.audit_log (
+  id         bigint generated always as identity primary key,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  user_id    uuid references auth.users(id) on delete set null,
+  email      text,
+  action     text not null,
+  detail     jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists audit_log_company on public.audit_log (company_id, created_at desc);
+
 -- ────────────── HÀM KIỂM QUYỀN ──────────────
 -- SECURITY DEFINER để đọc company_members mà không kích hoạt đệ quy RLS của chính bảng đó.
 -- Cố định search_path để không bị chiếm quyền qua schema giả.
@@ -263,9 +275,9 @@ alter table public.invoice_uploads   enable row level security;
 alter table public.invoice_lines     enable row level security;
 alter table public.credit_factors    enable row level security;
 alter table public.reminder_log      enable row level security;
+alter table public.audit_log         enable row level security;
 
 -- Danh mục tài khoản: dữ liệu tham chiếu, ai đăng nhập cũng đọc được
-drop policy if exists "read accounts" on public.accounts;
 drop policy if exists "read accounts" on public.accounts;
 create policy "read accounts" on public.accounts for select using (true);
 
@@ -418,6 +430,12 @@ drop policy if exists reminder_log_select on public.reminder_log;
 create policy reminder_log_select on public.reminder_log for select
   using (public.is_member(company_id));
 
+-- Nhật ký thao tác: chỉ Chủ sở hữu đọc. CỐ Ý không có policy insert/update/delete —
+-- chỉ hàm SECURITY DEFINER ghi được, nên không ai xoá được dấu vết của chính mình.
+drop policy if exists "owner reads audit_log" on public.audit_log;
+create policy "owner reads audit_log" on public.audit_log for select
+  using (public.is_owner(company_id));
+
 -- ────────────── NHẬN LỜI MỜI ──────────────
 -- Làm bằng hàm phía máy chủ để VAI TRÒ lấy từ chính lời mời, người dùng không
 -- tự truyền vai vào được. Nếu để client tự insert company_members thì họ có thể
@@ -437,9 +455,12 @@ begin
     raise exception 'Lời mời không hợp lệ, đã dùng hoặc đã hết hạn';
   end if;
 
+  -- do nothing, KHÔNG do update: người ĐÃ là thành viên mà nhận lời mời thì giữ
+  -- nguyên vai. Ghi đè thì chủ sở hữu tự mời email mình rồi bấm Tham gia là tự hạ
+  -- mình xuống editor — owner duy nhất làm vậy là công ty còn zero owner, kẹt hẳn.
   insert into public.company_members (company_id, user_id, role, email)
   values (inv.company_id, auth.uid(), inv.role, auth.jwt() ->> 'email')
-  on conflict (company_id, user_id) do update set role = excluded.role;
+  on conflict (company_id, user_id) do nothing;
 
   update public.company_invites set accepted_at = now() where id = inv_id;
 end;
@@ -447,3 +468,88 @@ $$;
 
 revoke all on function public.accept_invite(uuid) from public;
 grant execute on function public.accept_invite(uuid) to authenticated;
+
+-- Lời mời đang chờ của chính mình, KÈM tên công ty và người mời. Cần hàm riêng vì
+-- RLS của companies chỉ cho thành viên đọc (người được mời chưa phải thành viên nên
+-- join thẳng ra null), còn tên người mời thì nằm ở auth.users mà client không đọc
+-- được. Nới policy cho người có lời mời thì lộ nguyên dòng companies; hàm này chỉ
+-- trả đúng những cột màn hình cần.
+create or replace function public.my_invites()
+returns table (
+  id           uuid,
+  company_id   uuid,
+  company_name text,
+  role         text,
+  invited_by   text,
+  expires_at   timestamptz
+)
+language sql stable security definer set search_path = public as $$
+  select i.id,
+         i.company_id,
+         c.name,
+         i.role,
+         coalesce(u.raw_user_meta_data ->> 'display_name', u.email),
+         i.expires_at
+    from public.company_invites i
+    join public.companies c on c.id = i.company_id
+    left join auth.users u on u.id = i.created_by
+   where lower(i.email) = lower(auth.jwt() ->> 'email')
+     and i.accepted_at is null
+     and i.expires_at > now();
+$$;
+
+revoke all on function public.my_invites() from public;
+grant execute on function public.my_invites() to authenticated;
+
+-- ────────────── XUẤT TOÀN BỘ DỮ LIỆU ──────────────
+-- Làm dưới cơ sở dữ liệu chứ không ở trình duyệt: ẩn nút chỉ là che giao diện, ai
+-- cũng mở devtools gọi lại đúng loạt SELECT đó được. Hàm kiểm is_owner() trước khi
+-- đọc, và ghi lại mỗi lần xuất.
+--
+-- GIỚI HẠN: chặn được TÍNH NĂNG XUẤT, không chặn được việc đọc. Vai xem vẫn đọc
+-- từng bảng theo RLS nên vẫn tự chép ra được — đọc thì không thể "gỡ đọc". Cái đổi
+-- được là bản xuất một cú bấm chỉ Chủ sở hữu có, và mọi lần xuất đều để lại dấu vết.
+create or replace function public.export_company_data(cid uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  tbls jsonb;
+  sums jsonb;
+begin
+  if not public.is_owner(cid) then
+    raise exception 'Chỉ Chủ sở hữu công ty mới xuất được toàn bộ dữ liệu';
+  end if;
+
+  select jsonb_build_object(
+    'companies',         coalesce((select jsonb_agg(to_jsonb(t)) from public.companies         t where t.id = cid),         '[]'::jsonb),
+    'company_members',   coalesce((select jsonb_agg(to_jsonb(t)) from public.company_members   t where t.company_id = cid), '[]'::jsonb),
+    'receivables',       coalesce((select jsonb_agg(to_jsonb(t)) from public.receivables       t where t.company_id = cid), '[]'::jsonb),
+    'payables',          coalesce((select jsonb_agg(to_jsonb(t)) from public.payables          t where t.company_id = cid), '[]'::jsonb),
+    'cashflow_settings', coalesce((select jsonb_agg(to_jsonb(t)) from public.cashflow_settings t where t.company_id = cid), '[]'::jsonb),
+    'transactions',      coalesce((select jsonb_agg(to_jsonb(t)) from public.transactions      t where t.company_id = cid), '[]'::jsonb),
+    'credit_factors',    coalesce((select jsonb_agg(to_jsonb(t)) from public.credit_factors    t where t.company_id = cid), '[]'::jsonb),
+    'reminder_log',      coalesce((select jsonb_agg(to_jsonb(t)) from public.reminder_log      t where t.company_id = cid), '[]'::jsonb),
+    'invoice_uploads',   coalesce((select jsonb_agg(to_jsonb(t)) from public.invoice_uploads   t where t.company_id = cid), '[]'::jsonb),
+    'invoice_lines',     coalesce((select jsonb_agg(to_jsonb(l)) from public.invoice_lines l
+                                     join public.invoice_uploads u on u.id = l.upload_id
+                                    where u.company_id = cid),                                  '[]'::jsonb)
+  ) into tbls;
+
+  select jsonb_object_agg(key, jsonb_array_length(value)) into sums from jsonb_each(tbls);
+
+  insert into public.audit_log (company_id, user_id, email, action, detail)
+  values (cid, auth.uid(), auth.jwt() ->> 'email', 'export', sums);
+
+  return jsonb_build_object(
+    'exportedAt', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+    'companyId',  cid,
+    'note',       'Bản xuất dữ liệu công ty từ phần mềm Luxora. Mỗi khoá trong "tables" là một bảng.',
+    'tables',     tbls,
+    'summary',    sums
+  );
+end;
+$$;
+
+-- Mặc định Postgres cho PUBLIC chạy hàm mới — phải thu lại, nếu không vai anon
+-- (khách chưa đăng nhập) cũng gọi được.
+revoke all on function public.export_company_data(uuid) from public;
+grant execute on function public.export_company_data(uuid) to authenticated;

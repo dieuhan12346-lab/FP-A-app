@@ -85,15 +85,32 @@ export async function removeMember(companyId, userId, email) {
   }
 }
 
-/** Lời mời đang chờ dành cho chính mình (dùng để hiện lời nhắc sau khi đăng nhập). */
+/** Lời mời đang chờ dành cho chính mình (dùng để hiện lời nhắc sau khi đăng nhập).
+ *  Qua hàm my_invites() vì RLS của companies không cho người chưa-là-thành-viên đọc
+ *  tên công ty — join thẳng từ client sẽ ra "(chưa rõ tên)". */
 export async function listMyInvites() {
   if (!supabase) return [];
-  const { data, error } = await supabase
+
+  const { data, error } = await supabase.rpc("my_invites");
+  if (!error) {
+    return (data || []).map((i) => ({
+      id: i.id, companyId: i.company_id, role: i.role,
+      companyName: i.company_name || "", invitedBy: i.invited_by || "",
+    }));
+  }
+
+  // CSDL chưa chạy migration 013 → vẫn hiện lời mời, chỉ thiếu tên công ty + người mời.
+  // Ở đây lùi được vì bản cũ không lộ thêm gì, chỉ hiển thị kém hơn.
+  // Nhưng PHẢI kêu ra: đường lui này im lặng thì mọi lỗi của hàm đều trông y hệt
+  // "chưa chạy migration", và đó chính là cách một lỗi thật lẩn được cả buổi.
+  console.warn("[Luxora] my_invites() lỗi, dùng cách cũ (sẽ thiếu tên công ty):", error);
+
+  const fb = await supabase
     .from("company_invites")
     .select("id, company_id, role, expires_at, companies(name)")
     .is("accepted_at", null);
-  if (error) return [];
-  return (data || [])
+  if (fb.error) return [];
+  return (fb.data || [])
     .filter((i) => new Date(i.expires_at) > new Date())
     .map((i) => ({ id: i.id, companyId: i.company_id, role: i.role, companyName: i.companies?.name || "" }));
 }

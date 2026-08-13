@@ -7,14 +7,34 @@ Tài liệu cho **người vận hành hệ thống**. Bổ khuyết những m�
 
 ## 1. Xuất dữ liệu của một công ty
 
-**Khách hàng tự làm được**, không cần người vận hành:
+**Chủ sở hữu công ty tự làm được**, không cần người vận hành:
 
 > Trong app → biểu tượng công ty → **Xuất toàn bộ dữ liệu công ty**
 
-Tải về tệp JSON gồm: hồ sơ công ty, công nợ phải thu/phải chi, số dư đầu kỳ, giao dịch sổ quỹ đã
-nhập, hóa đơn và dòng hóa đơn, chấm điểm tín dụng, nhật ký nhắc nợ.
+Tải về tệp JSON gồm: hồ sơ công ty, danh sách thành viên, công nợ phải thu/phải chi, số dư đầu kỳ,
+giao dịch sổ quỹ đã nhập, hóa đơn và dòng hóa đơn, chấm điểm tín dụng, nhật ký nhắc nợ.
 
-Row Level Security vẫn áp dụng khi xuất — người dùng chỉ lấy được dữ liệu công ty mình thuộc về.
+### Ai xuất được
+
+Chỉ vai **Chủ sở hữu**. Kiểm ở tầng cơ sở dữ liệu, không phải ở giao diện: hàm
+`export_company_data()` gọi `is_owner()` trước khi đọc bất cứ bảng nào, nên ẩn nút hay gọi thẳng
+API đều cho cùng một kết quả.
+
+### Nhật ký
+
+Mỗi lần xuất ghi một dòng vào `audit_log`: ai, lúc nào, mỗi bảng bao nhiêu dòng. Chủ sở hữu xem
+được ngay trong màn hình Cài đặt công ty. Bảng này không có policy ghi/xoá cho người dùng — chỉ
+hàm phía máy chủ ghi được, nên người bị ghi không xoá được dấu vết của chính mình.
+
+### Điều KHÔNG làm được
+
+Chặn tính năng xuất **không phải** là chặn rò rỉ dữ liệu. Thành viên vai *Nhập liệu* và *Chỉ xem*
+vẫn đọc được số liệu công ty theo RLS — đó là việc của họ — nên vẫn tự chép ra ngoài được bằng
+cách gọi API hoặc copy khỏi màn hình. Đọc thì không thể "gỡ đọc".
+
+Cái kiểm soát được là: bản xuất gọn một cú bấm chỉ Chủ sở hữu có, và mọi lần dùng nó đều quy được
+về người. Muốn siết hơn nữa thì phải giảm phạm vi *đọc* của từng vai — nhưng trong phần mềm này
+báo cáo chính là dữ liệu, cắt đọc là bỏ luôn vai chỉ xem.
 
 ---
 
@@ -101,6 +121,10 @@ Cần biến môi trường `SUPABASE_URL` và `SUPABASE_SERVICE_KEY`.
 
 1. **Xoay ngay** khoá bị nghi lộ (Mục 3) — làm trước, điều tra sau.
 2. Xem nhật ký truy cập Supabase để khoanh vùng phạm vi và thời gian.
+   Kèm bảng `audit_log` để biết có ai xuất trọn bộ dữ liệu công ty nào không:
+   ```sql
+   select created_at, email, action, detail from public.audit_log order by created_at desc limit 50;
+   ```
 3. Xác định dữ liệu nào bị ảnh hưởng, của công ty nào.
 4. Thông báo cho khách hàng bị ảnh hưởng.
 
@@ -113,8 +137,10 @@ Cần biến môi trường `SUPABASE_URL` và `SUPABASE_SERVICE_KEY`.
 
 | Việc | Trạng thái |
 |---|---|
-| Xuất dữ liệu công ty | ✅ Có trong app |
+| Xuất dữ liệu công ty | ✅ Có trong app, kiểm quyền dưới CSDL |
+| Nhật ký xuất dữ liệu | ✅ Bảng `audit_log`, người dùng không xoá được |
 | Xoá dữ liệu công ty | ✅ Script có chốt chặn |
+| Ghi nhật ký cho thao tác xoá | ❌ Script chạy bằng service key, chưa ghi `audit_log` |
 | Quy trình xoay khoá | ✅ Tài liệu này |
 | Nhắc xoay khoá định kỳ | ❌ Chưa tự động — hiện phải tự nhớ |
 | Cam kết thời hạn thông báo sự cố | ❌ Cần luật sư |
