@@ -61,7 +61,11 @@ function NoCompany({ onDone }) {
                 <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,.04)", border: `1px solid ${C.line}` }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.companyName || t("join.company")}</div>
-                    <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{t("mem.role." + i.role)}</div>
+                    {/* Có tên người mời thì hiện — người nhận cần đối chiếu được lời mời
+                        này có thật không trước khi bấm Tham gia. */}
+                    <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {t("mem.role." + i.role)}{i.invitedBy ? " · " + t("join.by", { who: i.invitedBy }) : ""}
+                    </div>
                   </div>
                   <button onClick={() => join(i)} disabled={busy === i.id}
                     style={{ flex: "0 0 auto", padding: "9px 18px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 13, color: "#06251a", background: C.green, opacity: busy === i.id ? 0.6 : 1, fontFamily: "inherit" }}>

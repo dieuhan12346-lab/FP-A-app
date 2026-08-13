@@ -871,5 +871,16 @@
   "join.company": "(name unavailable)",
   "join.btn": "Join",
   "join.busy": "Joining…",
-  "join.or": "Or create your own company profile:"
+  "join.or": "Or create your own company profile:",
+  "join.by": "invited by {{who}}",
+  "ro.badge": "View only",
+  "ro.tip": "Your role in this company is Viewer — you can read every report, but not enter or change figures.",
+  "ro.note": "Viewers cannot enter or change figures. Ask an Owner to make you an Editor if you need to.",
+  "ro.note.send": "Viewers cannot send reminders.",
+  "ro.note.owner": "Only an Owner can do this.",
+  "audit.title": "Recent exports",
+  "audit.rows": "{{n}} rows",
+  "mem.needMigration": "Inviting is unavailable: the database is missing the invites table. Run supabase/migrations/011_roles_invites.sql, then reopen.",
+  "mem.invite.sent": "Invitation email sent to {{email}}.",
+  "mem.invite.noMail": "The invitation was created but the email could not be sent ({{err}}). They can still join by signing in with this exact email — let them know directly."
 }

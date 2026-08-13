@@ -1,17 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Plus, ArrowLeft, Pencil, Building2, Check, Download, Users, Trash2, Mail } from "lucide-react";
+import { X, Plus, ArrowLeft, Pencil, Building2, Check, Download, Users, Trash2, Mail, History } from "lucide-react";
 import { useCompany } from "./CompanyContext";
 import { updateCompanySettings, createCompany, listMyCompanies, switchCompany } from "./lib/company";
-import { exportCompanyData, downloadJson } from "./lib/dataExport";
+import { exportCompanyData, downloadJson, listAuditLog } from "./lib/dataExport";
 import { ROLES, myRole, listMembers, listInvites, inviteMember, cancelInvite, changeRole, removeMember } from "./lib/members";
+import { sendInvite } from "./lib/forecastApi";
 import CompanyForm from "./CompanyForm";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", red: "#F26D6D" };
 
 export default function CompanySettingsModal({ onClose }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { company, refresh } = useCompany();
   const [mode, setMode] = useState("list"); // "list" | "edit" | "create"
   const [companies, setCompanies] = useState(null); // null = đang tải
@@ -19,6 +20,7 @@ export default function CompanySettingsModal({ onClose }) {
   const [err, setErr] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState("");
+  const [audit, setAudit] = useState([]);
 
   /** Tải toàn bộ dữ liệu công ty hiện tại về máy dưới dạng JSON. */
   const doExport = async () => {
@@ -29,6 +31,7 @@ export default function CompanySettingsModal({ onClose }) {
       downloadJson(data, `luxora-${slug}-${new Date().toISOString().slice(0, 10)}.json`);
       const n = Object.values(data.summary || {}).reduce((s, v) => s + v, 0);
       setExportMsg(t("settings.export.done", { n }));
+      setAudit(await listAuditLog(company.id));   // lần xuất vừa rồi hiện ngay trong nhật ký
     } catch (ex) { setErr(ex.message); }
     finally { setExporting(false); }
   };
@@ -37,15 +40,23 @@ export default function CompanySettingsModal({ onClose }) {
   const [role, setRole] = useState(null);          // vai của chính mình trong công ty đang chọn
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);
+  const [invitesOk, setInvitesOk] = useState(true);   // false = CSDL chưa chạy migration 011
   const [invEmail, setInvEmail] = useState("");
   const [invRole, setInvRole] = useState("editor");
+  const [inviteMsg, setInviteMsg] = useState(null);   // { ok, text } sau khi mời
   const [mBusy, setMBusy] = useState("");
+  // Cùng quy ước với CompanyContext: chưa biết vai thì mở, đừng khoá nhầm người đang dùng bình thường.
+  const isOwner = role !== "editor" && role !== "viewer";
 
   const reloadMembers = async () => {
     if (!company?.id) return;
     setRole(await myRole(company.id));
     try { setMembers(await listMembers(company.id)); } catch { setMembers([]); }
-    try { setInvites(await listInvites(company.id)); } catch { setInvites([]); }
+    // Phân biệt "chưa có lời mời nào" với "cơ sở dữ liệu chưa có bảng lời mời" — trường
+    // hợp sau phải ẩn ô mời, nếu không người dùng bấm rồi ăn lỗi PostgREST thô.
+    try { setInvites(await listInvites(company.id)); setInvitesOk(true); }
+    catch { setInvites([]); setInvitesOk(false); }
+    setAudit(await listAuditLog(company.id));
   };
   useEffect(() => { reloadMembers(); }, [company?.id]);
 
@@ -56,8 +67,17 @@ export default function CompanySettingsModal({ onClose }) {
     finally { setMBusy(""); }
   };
   const doInvite = () => runM("invite", async () => {
-    await inviteMember(company.id, invEmail, invRole);
-    setInvEmail("");
+    const mail = invEmail.trim().toLowerCase();
+    await inviteMember(company.id, mail, invRole);
+    setInvEmail(""); setInviteMsg("");
+    // Lời mời đã ghi xong. Thư gửi hỏng thì KHÔNG huỷ lời mời — người được mời vẫn
+    // vào được bằng cách đăng nhập đúng email này, nên chỉ báo để owner tự nhắn tay.
+    try {
+      await sendInvite({ companyId: company.id, to: mail, role: invRole, lang: i18n.language });
+      setInviteMsg({ ok: true, text: t("mem.invite.sent", { email: mail }) });
+    } catch (ex) {
+      setInviteMsg({ ok: false, text: t("mem.invite.noMail", { err: ex.message }) });
+    }
   });
 
   useEffect(() => {
@@ -139,7 +159,7 @@ export default function CompanySettingsModal({ onClose }) {
                     {active ? (
                       <>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: C.green, background: C.green + "1f", padding: "3px 9px", borderRadius: 7 }}><Check size={12} />{t("settings.active")}</span>
-                        <button onClick={(e) => { e.stopPropagation(); setMode("edit"); }} title={t("settings.renameCurrent")} style={{ display: "grid", placeItems: "center", width: 28, height: 28, borderRadius: 8, border: "none", cursor: "pointer", color: C.sub, background: "transparent" }}><Pencil size={14} /></button>
+                        {isOwner && <button onClick={(e) => { e.stopPropagation(); setMode("edit"); }} title={t("settings.renameCurrent")} style={{ display: "grid", placeItems: "center", width: 28, height: 28, borderRadius: 8, border: "none", cursor: "pointer", color: C.sub, background: "transparent" }}><Pencil size={14} /></button>}
                       </>
                     ) : busyId === c.id ? (
                       <span style={{ fontSize: 11, color: C.sub }}>{t("settings.switching")}</span>
@@ -187,7 +207,13 @@ export default function CompanySettingsModal({ onClose }) {
                 ))}
               </div>
 
-              {role === "owner" && (
+              {role === "owner" && !invitesOk && (
+                <div style={{ marginTop: 9, padding: "9px 12px", borderRadius: 9, fontSize: 11.5, color: C.sub, background: "rgba(255,255,255,.03)", border: `1px dashed ${C.line}`, lineHeight: 1.5 }}>
+                  {t("mem.needMigration")}
+                </div>
+              )}
+
+              {role === "owner" && invitesOk && (
                 <>
                   {invites.length > 0 && (
                     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -217,19 +243,50 @@ export default function CompanySettingsModal({ onClose }) {
                       {mBusy === "invite" ? t("mem.inviting") : t("mem.invite")}
                     </button>
                   </div>
+                  {inviteMsg && (
+                    <div style={{ marginTop: 8, fontSize: 11.5, color: inviteMsg.ok ? C.green : C.gold, lineHeight: 1.5 }}>
+                      {inviteMsg.text}
+                    </div>
+                  )}
                   <div style={{ marginTop: 7, fontSize: 11, color: C.sub, lineHeight: 1.5 }}>{t("mem.invite.hint")}</div>
                 </>
               )}
             </div>
             )}
 
-            {/* Xuất toàn bộ dữ liệu công ty — quyền mang theo dữ liệu, và để giữ bản sao khi rời dịch vụ */}
+            {/* Xuất toàn bộ dữ liệu công ty — quyền mang theo dữ liệu, và để giữ bản sao khi rời dịch vụ.
+                Gom cả sổ sách vào một file nên để Chủ sở hữu giữ, không mở cho mọi thành viên. */}
+            {isOwner && (
             <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
               <button onClick={doExport} disabled={exporting} style={{ width: "100%", padding: "10px 0", borderRadius: 10, cursor: exporting ? "default" : "pointer", fontWeight: 700, fontSize: 12.5, color: C.txt, background: C.panel2, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: "inherit", opacity: exporting ? 0.7 : 1 }}>
                 <Download size={14} />{exporting ? t("settings.export.busy") : t("settings.export")}
               </button>
               <div style={{ marginTop: 7, fontSize: 11, color: exportMsg ? C.green : C.sub, lineHeight: 1.5 }}>{exportMsg || t("settings.export.hint")}</div>
+
+              {/* Nhật ký xuất — thành viên vai xem vẫn đọc được dữ liệu nên vẫn tự chép ra
+                  được; chặn hẳn thì không, nhưng bản xuất một cú bấm thì để lại dấu vết. */}
+              {audit.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+                    <History size={13} color={C.sub} />
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{t("audit.title")}</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {audit.map((a) => {
+                      const rows = Object.values(a.detail || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+                      return (
+                        <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.sub }}>
+                          <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.email || "—"}</span>
+                          <span style={{ flex: "0 0 auto" }}>{t("audit.rows", { n: rows })}</span>
+                          <span style={{ flex: "0 0 auto" }}>{new Date(a.created_at).toLocaleString()}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
+            )}
           </>
         )}
 

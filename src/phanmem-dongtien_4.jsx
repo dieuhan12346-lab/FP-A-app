@@ -18,6 +18,7 @@ import { fetchForecast, sendReminder, getEmailDomain, setupEmailDomain, verifyEm
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
 import { useCompany } from "./CompanyContext";
+import { RoBadge, RoNote } from "./RoleUi";
 import { fmtMoney, fmtMoneyM, fmtMoneyCompactM, fmtCompactM, fmtCompactB } from "./lib/money";
 import CompanySettingsModal from "./CompanySettingsModal";
 import {
@@ -1845,7 +1846,7 @@ function demoReconcileMatches() {
 /* Thẻ cấu hình domain gửi email theo công ty (option B). Chỉ hiện ở bản chính, có company. */
 function EmailDomainCard() {
   const { t } = useT();
-  const { company } = useCompany();
+  const { company, isOwner } = useCompany();
   const [dom, setDom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -1891,10 +1892,14 @@ function EmailDomainCard() {
           <ShieldCheck size={16} color={C_COL.green} />
           <span style={{ fontSize: 12.5 }}>{t("col.dom.verified")} <b className="tnum" style={{ color: C_COL.green }}>no-reply@{dom.domain}</b></span>
         </div>
-        <button className="btn" onClick={() => { setEditing(true); setInput(dom.domain || ""); }} style={{ fontSize: 11.5, color: C_COL.sub, background: "transparent", border: `1px solid ${C_COL.line}`, borderRadius: 8, padding: "5px 10px" }}>{t("col.dom.change")}</button>
+        {isOwner && <button className="btn" onClick={() => { setEditing(true); setInput(dom.domain || ""); }} style={{ fontSize: 11.5, color: C_COL.sub, background: "transparent", border: `1px solid ${C_COL.line}`, borderRadius: 8, padding: "5px 10px" }}>{t("col.dom.change")}</button>}
       </div>
     );
   }
+
+  // Tên miền gửi thư là việc của Chủ sở hữu (đụng DNS + hoá đơn dịch vụ). Người khác
+  // thấy dòng xác nhận ở trên khi đã xong, còn lúc chưa xong thì không có gì để họ làm.
+  if (!isOwner) return null;
 
   const showForm = status === "none" || editing;
   return (
@@ -1950,7 +1955,7 @@ function EmailDomainCard() {
 
 function DebtCollect() {
   const { t } = useT();
-  const { company } = useCompany();
+  const { company, canEdit } = useCompany();
   const currency = company?.currency || "VND";
   const isVnCompany = (company?.country || "VN") === "VN"; // ngoài VN → nhắc nợ toàn tiếng Anh
   // Kênh chat: VN dùng Zalo, ngoài VN dùng WhatsApp (giữ id "zalo" cho logic soạn tin/lịch)
@@ -2226,7 +2231,7 @@ function DebtCollect() {
                       <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2 }}>{m.txn.date} · {fmtTr_COL((Number(m.txn.amtIn) || 0) / 1e6)}</div>
                     </div>
                     <span className="tnum" style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 800, color: cc, background: cc + "1e", padding: "3px 9px", borderRadius: 20, whiteSpace: "nowrap" }}>{t("col.rec.match", { p: conf })}</span>
-                    <button className="btn" onClick={() => confirmMatch(m)} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 9, fontWeight: 700, fontSize: 12, color: "#08130d", background: C_COL.green }}><Check size={13} />{t("col.rec.confirm")}</button>
+                    {canEdit && <button className="btn" onClick={() => confirmMatch(m)} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 9, fontWeight: 700, fontSize: 12, color: "#08130d", background: C_COL.green }}><Check size={13} />{t("col.rec.confirm")}</button>}
                   </div>
                 );
               })}
@@ -2253,7 +2258,7 @@ function DebtCollect() {
                     const on = !deselected.has(d.id);
                     return (
                       <label key={d.id} style={{ display: "grid", gridTemplateColumns: "20px minmax(0,1fr) auto auto", gap: 10, alignItems: "center", padding: "9px 12px", borderRadius: 10, background: C_COL.panel2, border: `1px solid ${C_COL.line}`, cursor: "pointer" }}>
-                        <input type="checkbox" checked={on} onChange={() => setDeselected((s) => { const n = new Set(s); if (on) n.add(d.id); else n.delete(d.id); return n; })} />
+                        <input type="checkbox" checked={on} disabled={!canEdit} onChange={() => setDeselected((s) => { const n = new Set(s); if (on) n.add(d.id); else n.delete(d.id); return n; })} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</div>
                           <div className="tnum" style={{ fontSize: 10.8, color: C_COL.sub, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.email} · {t("col.overdue", { d: d.days })}</div>
@@ -2264,12 +2269,14 @@ function DebtCollect() {
                     );
                   })}
                 </div>
-                <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
-                  <button className="btn" onClick={sendBatch} disabled={batchBusy} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#2a1500", background: `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, opacity: batchBusy ? 0.7 : 1 }}>
-                    <Send size={14} />{batchBusy ? t("col.sch.sending") : t("col.sch.sendAll", { n: schedule.due.filter((d) => !deselected.has(d.id)).length })}
-                  </button>
-                  {batchMsg && <span style={{ fontSize: 12, color: C_COL.green, fontWeight: 700 }}>{batchMsg}</span>}
-                </div>
+                {canEdit ? (
+                  <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <button className="btn" onClick={sendBatch} disabled={batchBusy} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#2a1500", background: `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, opacity: batchBusy ? 0.7 : 1 }}>
+                      <Send size={14} />{batchBusy ? t("col.sch.sending") : t("col.sch.sendAll", { n: schedule.due.filter((d) => !deselected.has(d.id)).length })}
+                    </button>
+                    {batchMsg && <span style={{ fontSize: 12, color: C_COL.green, fontWeight: 700 }}>{batchMsg}</span>}
+                  </div>
+                ) : <RoNote k="ro.note.send" style={{ marginTop: 12 }} />}
               </>
             )}
             {(schedule.waiting > 0 || schedule.noEmail > 0) && (
@@ -2377,6 +2384,8 @@ function DebtCollect() {
               <div style={{ padding: "10px 13px 13px", fontSize: 12.8, color: C_COL.txt, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{msg.body}</div>
             </div>
 
+            {!canEdit && <RoNote k="ro.note.send" style={{ marginTop: 12 }} />}
+            {canEdit && (
             <div style={{ display: "flex", gap: 9, marginTop: 12, flexWrap: "wrap" }}>
               {(() => { const blocked = sending || (!isEmailCh && !hasContact); return (
               <button className="btn" onClick={onSendClick} disabled={blocked} style={{ flex: 1, minWidth: 160, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 7, padding: "11px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, opacity: blocked ? 0.6 : 1, cursor: blocked ? "default" : "pointer", color: isSent ? C_COL.green : "#2a1500", background: isSent ? C_COL.greenSoft : `linear-gradient(135deg, ${C_COL.orange}, #C9711A)`, border: isSent ? `1px solid ${C_COL.green}55` : "none" }}>
@@ -2392,13 +2401,14 @@ function DebtCollect() {
               )}
               <button className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, fontWeight: 700, fontSize: 13, color: C_COL.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_COL.line}` }}><Calendar size={15} />{t("col.schedule.btn")}</button>
             </div>
-            {!DEMO_MODE && isEmailCh && cur && !cur.email && (
+            )}
+            {canEdit && !DEMO_MODE && isEmailCh && cur && !cur.email && (
               <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.gold, display: "flex", alignItems: "center", gap: 6 }}><Info size={13} />{t("col.send.noEmail")}</div>
             )}
-            {!isEmailCh && cur && !cur.phone && (
+            {canEdit && !isEmailCh && cur && !cur.phone && (
               <div style={{ marginTop: 8, fontSize: 11.5, color: C_COL.gold, display: "flex", alignItems: "center", gap: 6 }}><Info size={13} />{t("col.send.noPhone")}</div>
             )}
-            {!isEmailCh && cur && cur.phone && (
+            {canEdit && !isEmailCh && cur && cur.phone && (
               <div style={{ marginTop: 8, fontSize: 11, color: isOpened ? C_COL.gold : C_COL.sub, display: "flex", alignItems: "center", gap: 6 }}><Info size={12} />{copiedZalo ? t("col.assist.copied") : isOpened ? t("col.assist.opened") : t("col.assist.hint")}</div>
             )}
             {sendErr && (
@@ -2642,7 +2652,7 @@ const fmtVnd_CR = (m) => `${Math.round(m * 1e6).toLocaleString("vi-VN")} ₫`;
 
 function CreditScore() {
   const { t } = useT();
-  const { company } = useCompany();
+  const { company, canEdit } = useCompany();
   const currency = company?.currency || "VND";
   const fmtVnd_CR = (m) => fmtMoneyM(m, currency);
   const fmtTr_CR = (m) => fmtCompactM(m, currency);
@@ -2830,7 +2840,7 @@ function CreditScore() {
                 <div style={{ fontSize: 12, color: C_CR.sub, marginTop: 2 }}>{DEMO_MODE ? `${t(sel.industryKey)} · ${t("cr.rev", { rev: t("cr.revFmt", { n: fmtB_CR(sel.revBn) }) })} · ${t("cr.req", { r: fmtTr_CR(sel.requested) })}` : t("cr.paysum", { paid: Math.round(sel.pay.paidRatio * 100), open: fmtTr_CR(sel.pay.open), overdue: fmtTr_CR(sel.pay.overdue), days: sel.pay.maxDays, n: sel.pay.n })}</div>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {!DEMO_MODE && !editF && (
+                {!DEMO_MODE && canEdit && !editF && (
                   <button className="btn" onClick={startEdit} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 11, fontWeight: 700, fontSize: 12.5, color: C_CR.txt, background: "rgba(255,255,255,.05)", border: `1px solid ${C_CR.line}` }}><SlidersHorizontal size={14} />{t("cr.editf")}</button>
                 )}
                 <button className="btn" onClick={run} disabled={phase === "scoring"} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 11, fontWeight: 800, fontSize: 13.5, color: "#06202f", background: phase === "scoring" ? "#33415566" : `linear-gradient(135deg, ${C_CR.cyan}, #2E9BD6)`, opacity: phase === "scoring" ? .7 : 1 }}>
@@ -2983,6 +2993,8 @@ function CreditScore() {
                   {t("cr.limit.note", { g: g.g, label: t(g.labelKey), safe: fmtTr_CR(safeLimit), ratio: Math.round(g.ratio * 100), base: fmtTr_CR(baseLimit), weak: t(weakestReal_CR(sel.f, FLIST)) })}
                   {cashCapped && <div style={{ marginTop: 5, color: C_CR.red, display: "flex", gap: 6, alignItems: "flex-start" }}><ShieldAlert size={12} style={{ flex: "0 0 auto", marginTop: 2 }} /><span>{t("cr.limit.cashcap", { v: fmtTr_CR(cashProven) })}</span></div>}
                 </div>
+                {!canEdit && <RoNote style={{ marginTop: 12 }} />}
+                {canEdit && (
                 <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" }}>
                   <button className="btn" onClick={applyLimit} disabled={DEMO_MODE || decBusy === "apply"} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 16px", borderRadius: 10, fontWeight: 800, fontSize: 13, color: "#0b1a10", background: `linear-gradient(135deg, ${C_CR.green}, #1FA877)`, opacity: decBusy === "apply" ? 0.7 : 1 }}><Check size={15} />{decBusy === "apply" ? t("cr.apply.saving") : t("cr.apply")}</button>
                   {reviewForm == null ? (
@@ -2995,6 +3007,7 @@ function CreditScore() {
                     </>
                   )}
                 </div>
+                )}
                 {/* Trạng thái đã duyệt + lịch rà soát + cảnh báo vượt hạn mức */}
                 {!DEMO_MODE && (sel.approvedLimit != null || sel.reviewAt) && (() => {
                   const over = sel.approvedLimit != null && sel.pay.open > sel.approvedLimit;
@@ -3638,7 +3651,7 @@ const STAGES_INV = [
 
 function InvoiceProcess_INV() {
   const { t, i18n: i18nInst } = useT();
-  const { company } = useCompany();
+  const { company, canEdit } = useCompany();
   const currency = company?.currency || "VND";
   const country = company?.country || "VN";              // → luật thuế: định dạng MST, dải thuế suất
   // Công ty song chuẩn (FDI: nộp VAS, báo cáo mẹ IFRS) xem được bút toán theo cả hai.
@@ -3830,7 +3843,7 @@ function InvoiceProcess_INV() {
                 <Clock size={15} />{t("inv.history.button")} · {uploads.length}
               </button>
             )}
-            <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13.5, color: "#06251a", background: `linear-gradient(135deg, ${C_INV.green}, #1FA877)` }}><FileSpreadsheet size={16} />{t("inv.upload")}</button>
+            {canEdit && <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, fontWeight: 800, fontSize: 13.5, color: "#06251a", background: `linear-gradient(135deg, ${C_INV.green}, #1FA877)` }}><FileSpreadsheet size={16} />{t("inv.upload")}</button>}
             {lines && <button className="btn" onClick={reset} title={t("inv.reset")} style={{ display: "grid", placeItems: "center", width: 40, height: 40, borderRadius: 10, color: C_INV.sub, background: "rgba(255,255,255,.05)", border: `1px solid ${C_INV.line}` }}><RotateCcw size={16} /></button>}
           </div>
         </header>
@@ -3852,7 +3865,7 @@ function InvoiceProcess_INV() {
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.fileName}</span>
                     <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{t("inv.history.lines", { n: u.lineCount })}</span>
                     <span className="tnum" style={{ fontSize: 11, color: C_INV.sub }}>{new Date(u.createdAt).toLocaleString(lang === "vi" ? "vi-VN" : "en-US", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-                    <button className="btn" title={t("inv.history.delete")} onClick={(e) => { e.stopPropagation(); removeUpload(u); }} style={{ display: "grid", placeItems: "center", width: 26, height: 26, borderRadius: 7, color: C_INV.red, background: "transparent", border: "none" }}><X size={14} /></button>
+                    {canEdit && <button className="btn" title={t("inv.history.delete")} onClick={(e) => { e.stopPropagation(); removeUpload(u); }} style={{ display: "grid", placeItems: "center", width: 26, height: 26, borderRadius: 7, color: C_INV.red, background: "transparent", border: "none" }}><X size={14} /></button>}
                   </div>
                 );
               })}
@@ -4066,6 +4079,7 @@ export default function App() {
 
 function AppShell() {
   const { t } = useT();
+  const { role } = useCompany();
   const [page, setPage] = useState("cashflow");
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
@@ -4170,6 +4184,7 @@ function AppShell() {
             <div style={{ fontSize: 11.5, color: C.sub }}>{t("nav." + active.key + ".desc")}</div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {role === "viewer" && <RoBadge />}
             <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "6px 12px", borderRadius: 20 }}>
               <span style={{ width: 7, height: 7, borderRadius: 9, background: C.green }} />{t("app.status")}
             </span>

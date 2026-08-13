@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { fetchMyCompany } from "./lib/company";
+import { myRole } from "./lib/members";
 import { supabase } from "./lib/supabase";
 import { applyCompanyUiLanguage } from "./i18n";
 
-export const CompanyContext = createContext({ company: null, loading: true, refresh: async () => {} });
+export const CompanyContext = createContext({ company: null, role: null, canEdit: true, isOwner: true, loading: true, refresh: async () => {} });
 
 export function useCompany() {
   return useContext(CompanyContext);
@@ -11,6 +12,7 @@ export function useCompany() {
 
 export function CompanyProvider({ children }) {
   const [company, setCompany] = useState(null);
+  const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fxTick, setFxTick] = useState(0);
 
@@ -22,14 +24,16 @@ export function CompanyProvider({ children }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!supabase) { setCompany(null); setLoading(false); return; }
+    if (!supabase) { setCompany(null); setRole(null); setLoading(false); return; }
     setLoading(true);
     try {
       const c = await fetchMyCompany();
       setCompany(c);
       if (c) applyCompanyUiLanguage(c);
+      setRole(c ? await myRole(c.id) : null);
     } catch {
       setCompany(null);
+      setRole(null);
     } finally {
       setLoading(false);
     }
@@ -37,5 +41,11 @@ export function CompanyProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return <CompanyContext.Provider value={{ company, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
+  /* Chốt chặn quyền thật nằm ở RLS trong cơ sở dữ liệu. Hai cờ dưới chỉ để giao diện
+     khỏi mời người ta bấm một nút chắc chắn báo lỗi — nên khi chưa biết vai (bản dựng
+     demo, hoặc CSDL chưa có cột role) thì mở, không khoá nhầm người đang dùng bình thường. */
+  const canEdit = role !== "viewer";
+  const isOwner = role !== "viewer" && role !== "editor";
+
+  return <CompanyContext.Provider value={{ company, role, canEdit, isOwner, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
 }

@@ -871,5 +871,16 @@
   "join.company": "(chưa rõ tên)",
   "join.btn": "Tham gia",
   "join.busy": "Đang vào…",
-  "join.or": "Hoặc tạo hồ sơ công ty của riêng bạn:"
+  "join.or": "Hoặc tạo hồ sơ công ty của riêng bạn:",
+  "join.by": "{{who}} mời",
+  "ro.badge": "Chỉ xem",
+  "ro.tip": "Vai của bạn trong công ty này là Chỉ xem — đọc được mọi báo cáo, nhưng không nhập hay sửa số liệu.",
+  "ro.note": "Vai Chỉ xem không nhập hay sửa số liệu. Nhờ Chủ sở hữu đổi vai của bạn thành Nhập liệu nếu cần.",
+  "ro.note.send": "Vai Chỉ xem không gửi nhắc nợ được.",
+  "ro.note.owner": "Việc này chỉ Chủ sở hữu làm được.",
+  "audit.title": "Lần xuất gần đây",
+  "audit.rows": "{{n}} dòng",
+  "mem.needMigration": "Chưa mời thêm người được: cơ sở dữ liệu thiếu bảng lời mời. Chạy supabase/migrations/011_roles_invites.sql rồi mở lại.",
+  "mem.invite.sent": "Đã gửi thư mời tới {{email}}.",
+  "mem.invite.noMail": "Đã tạo lời mời nhưng chưa gửi được thư ({{err}}). Người được mời vẫn vào được bằng cách đăng nhập đúng email này — nhắn tay giúp họ."
 }

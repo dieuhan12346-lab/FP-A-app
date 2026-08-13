@@ -6,6 +6,8 @@ import { addReceivable, addPayable, setReceivableStatus, setPayableStatus, delet
 import LedgerImportSection from "./LedgerImportSection";
 import { fmtMoney, moneySymbol } from "./lib/money";
 import { booksCurrencyFor, chartFor } from "./lib/regionDefaults";
+import { useCompany } from "./CompanyContext";
+import { RoNote } from "./RoleUi";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", gold: "#E8B34B", red: "#F26D6D", cyan: "#39B8D8" };
 
@@ -13,6 +15,7 @@ const inp = { padding: "8px 11px", borderRadius: 9, fontSize: 12.5, color: C.txt
 
 export default function CashflowDataModal({ company, companyId, data, onChanged, onClose, asPage = false }) {
   const { t } = useTranslation();
+  const { canEdit } = useCompany();
   const currency = company?.currency || "VND";
   const books = booksCurrencyFor(company?.country);
   const fmtAmt = (v) => fmtMoney(Number(v) || 0, currency, books);
@@ -82,15 +85,19 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
               {item.customerPhone && <span className="tnum" style={{ fontSize: 10.5, color: C.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.customerPhone}</span>}
             </div>
           : <div style={{ minWidth: 0 }}><span style={{ display: "inline-block", maxWidth: "100%", fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, color: C.gold, background: C.gold + "1c", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "middle" }}>{t("cf.cat." + (item.category || "other"))}</span></div>}
-        {/* Hành động (canh dưới nút + Thêm) */}
+        {/* Hành động (canh dưới nút + Thêm) — vai chỉ xem thấy trạng thái, không thấy nút */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
-          <button onClick={() => run(() => (isRecv ? setReceivableStatus : setPayableStatus)(item.id, paid ? "open" : "paid"))}
-            title={paid ? t("cf.data.reopen") : t("cf.data.markPaid")}
-            style={iconBtn(paid ? C.sub : C.green, paid ? C.line : C.green + "55")}>
-            {paid ? <RotateCcw size={13} /> : <Check size={13} />}
-          </button>
-          <button onClick={() => run(() => (isRecv ? deleteReceivable : deletePayable)(item.id))} title={t("cf.data.del")}
-            style={iconBtn(C.red)}><X size={13} /></button>
+          {canEdit ? (<>
+            <button onClick={() => run(() => (isRecv ? setReceivableStatus : setPayableStatus)(item.id, paid ? "open" : "paid"))}
+              title={paid ? t("cf.data.reopen") : t("cf.data.markPaid")}
+              style={iconBtn(paid ? C.sub : C.green, paid ? C.line : C.green + "55")}>
+              {paid ? <RotateCcw size={13} /> : <Check size={13} />}
+            </button>
+            <button onClick={() => run(() => (isRecv ? deleteReceivable : deletePayable)(item.id))} title={t("cf.data.del")}
+              style={iconBtn(C.red)}><X size={13} /></button>
+          </>) : (
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: paid ? C.green : C.sub }}>{paid ? t("cf.data.markPaid") : "—"}</span>
+          )}
         </div>
       </div>
     );
@@ -106,17 +113,23 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
 
         {err && <div style={{ marginBottom: 14, padding: "9px 13px", borderRadius: 9, fontSize: 12.5, color: C.red, background: C.red + "14", border: `1px solid ${C.red}44` }}>⚠ {err}</div>}
 
+        {!canEdit && <RoNote style={{ marginBottom: 18 }} />}
+
         {/* Nhập sổ quỹ từ ERP (MISA) → bảng transactions, nguồn lịch sử cho dự báo */}
-        <LedgerImportSection companyId={companyId} onImported={onChanged} C={C} inp={inp} currency={currency} books={books} />
+        {canEdit && <LedgerImportSection companyId={companyId} onImported={onChanged} C={C} inp={inp} currency={currency} books={books} />}
 
         {/* Số dư đầu kỳ */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
           <Wallet size={15} color={C.gold} />
           <span style={{ fontSize: 13, fontWeight: 700 }}>{t("cf.data.opening", { accts: cashAccts })}</span>
-          <input className="tnum" type="number" min="0" step="1000000" value={opening} onChange={(e) => setOpening(e.target.value)} style={{ ...inp, width: 180, textAlign: "right" }} />
-          <span style={{ fontSize: 11, color: C.sub }}>{moneySymbol(currency)}</span>
-          <button onClick={saveOpening} disabled={savingOpen} style={{ padding: "8px 16px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: "#06251a", background: C.green, opacity: savingOpen ? 0.6 : 1, fontFamily: "inherit" }}>{savingOpen ? "…" : t("cf.data.save")}</button>
-          {openSaved && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: C.green }}><Check size={13} />{t("cf.data.saved")}</span>}
+          {canEdit ? (<>
+            <input className="tnum" type="number" min="0" step="1000000" value={opening} onChange={(e) => setOpening(e.target.value)} style={{ ...inp, width: 180, textAlign: "right" }} />
+            <span style={{ fontSize: 11, color: C.sub }}>{moneySymbol(currency)}</span>
+            <button onClick={saveOpening} disabled={savingOpen} style={{ padding: "8px 16px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: "#06251a", background: C.green, opacity: savingOpen ? 0.6 : 1, fontFamily: "inherit" }}>{savingOpen ? "…" : t("cf.data.save")}</button>
+            {openSaved && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: C.green }}><Check size={13} />{t("cf.data.saved")}</span>}
+          </>) : (
+            <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>{fmtAmt(data?.openingCash ?? 0)}</span>
+          )}
         </div>
 
         {/* Phải thu */}
@@ -125,6 +138,7 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
           <span style={{ fontSize: 13.5, fontWeight: 800 }}>{t("cf.data.recv")}</span>
           <span style={{ fontSize: 11, color: C.sub }}>· {receivables.length}</span>
         </div>
+        {canEdit && (
         <div style={{ display: "grid", gridTemplateColumns: ROW_COLS_RECV, gap: 8, marginBottom: 10 }}>
           <input style={inp} placeholder={t("cf.data.customer")} value={rForm.customer} onChange={(e) => setRForm({ ...rForm, customer: e.target.value })} />
           <input className="tnum" style={inp} type="number" min="0" placeholder={t("cf.data.amount", { cur: moneySymbol(currency) })} value={rForm.amount} onChange={(e) => setRForm({ ...rForm, amount: e.target.value })} />
@@ -135,6 +149,7 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
           </div>
           <button onClick={addR} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 9, border: `1px dashed ${C.green}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, color: C.green, background: "transparent", fontFamily: "inherit", alignSelf: "start" }}><Plus size={13} />{t("cf.data.add")}</button>
         </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 22 }}>
           {receivables.length === 0 && <div style={{ fontSize: 12, color: C.sub, padding: "6px 2px" }}>{t("cf.data.recv.empty")}</div>}
           {receivables.map((r) => <Row key={r.id} item={r} isRecv />)}
@@ -146,6 +161,7 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
           <span style={{ fontSize: 13.5, fontWeight: 800 }}>{t("cf.data.pay")}</span>
           <span style={{ fontSize: 11, color: C.sub }}>· {payables.length}</span>
         </div>
+        {canEdit && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 130px 128px 78px", gap: 8, marginBottom: 10 }}>
           <input style={inp} placeholder={t("cf.data.label")} value={pForm.label} onChange={(e) => setPForm({ ...pForm, label: e.target.value })} />
           <input className="tnum" style={inp} type="number" min="0" placeholder={t("cf.data.amount", { cur: moneySymbol(currency) })} value={pForm.amount} onChange={(e) => setPForm({ ...pForm, amount: e.target.value })} />
@@ -155,6 +171,7 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
           </select>
           <button onClick={addP} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 9, border: `1px dashed ${C.red}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, color: C.red, background: "transparent", fontFamily: "inherit" }}><Plus size={13} />{t("cf.data.add")}</button>
         </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {payables.length === 0 && <div style={{ fontSize: 12, color: C.sub, padding: "6px 2px" }}>{t("cf.data.pay.empty")}</div>}
           {payables.map((p) => <Row key={p.id} item={p} isRecv={false} />)}
