@@ -5,11 +5,41 @@ import { X, Plus, ArrowLeft, Pencil, Building2, Check, Download, Users, Trash2, 
 import { useCompany } from "./CompanyContext";
 import { updateCompanySettings, createCompany, listMyCompanies, switchCompany } from "./lib/company";
 import { exportCompanyData, downloadJson, listAuditLog } from "./lib/dataExport";
-import { ROLES, myRole, listMembers, listInvites, inviteMember, cancelInvite, changeRole, removeMember } from "./lib/members";
+import { ROLES, AGENTS, SCOPES, myRole, listMembers, listInvites, inviteMember, cancelInvite, changeRole, removeMember, setMemberAgents, setMemberScope } from "./lib/members";
 import { sendInvite } from "./lib/forecastApi";
 import CompanyForm from "./CompanyForm";
 
 const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,255,255,.09)", txt: "#E8EEF9", sub: "#8CA0BE", green: "#26C287", red: "#F26D6D" };
+
+/* Chọn agent cho một thành viên.
+   null = toàn quyền (khác hẳn mảng rỗng = không vào được agent nào). Giữ phân biệt
+   này vì thành viên cũ chưa phân agent đều đang null — coi null như rỗng là khoá
+   sạch mọi người ngay lần đầu mở màn hình. */
+function AgentPicker({ value, busy, onChange, t }) {
+  const all = value == null;
+  const set = new Set(all ? AGENTS : value);
+  const toggle = (id) => {
+    const next = new Set(all ? AGENTS : value);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onChange(next.size === AGENTS.length ? null : [...next]);
+  };
+  const chip = (on) => ({
+    padding: "3px 9px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, fontFamily: "inherit",
+    cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
+    color: on ? "#06251a" : C.sub,
+    background: on ? C.green : "transparent",
+    border: `1px solid ${on ? C.green : C.line}`,
+  });
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.line}`, alignItems: "center" }}>
+      <span style={{ fontSize: 10.5, color: C.sub, marginRight: 2 }}>{t("mem.agents")}</span>
+      {AGENTS.map((id) => (
+        <button key={id} disabled={busy} onClick={() => toggle(id)} style={chip(set.has(id))}>{t("nav." + id)}</button>
+      ))}
+      {set.size === 0 && <span style={{ fontSize: 10.5, color: C.red }}>{t("mem.agents.none")}</span>}
+    </div>
+  );
+}
 
 export default function CompanySettingsModal({ onClose }) {
   const { t, i18n } = useTranslation();
@@ -185,7 +215,8 @@ export default function CompanySettingsModal({ onClose }) {
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {members.map((m) => (
-                  <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 9, background: C.panel2, border: `1px solid ${C.line}` }}>
+                  <div key={m.user_id} style={{ padding: "8px 11px", borderRadius: 9, background: C.panel2, border: `1px solid ${C.line}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.email || m.user_id.slice(0, 8) + "…"}</span>
                     {role === "owner" ? (
                       <select value={m.role} disabled={mBusy === "role" + m.user_id}
@@ -202,6 +233,35 @@ export default function CompanySettingsModal({ onClose }) {
                         style={{ display: "grid", placeItems: "center", width: 26, height: 26, borderRadius: 7, border: "none", cursor: "pointer", color: C.red, background: "transparent" }}>
                         <Trash2 size={13} />
                       </button>
+                    )}
+                    </div>
+                    {/* Agent được phép dùng. Owner luôn vào hết nên không cần chọn. */}
+                    {role === "owner" && m.role !== "owner" && m.agents !== undefined && (
+                      <AgentPicker
+                        value={m.agents}
+                        busy={mBusy === "ag" + m.user_id}
+                        onChange={(next) => runM("ag" + m.user_id, () => setMemberAgents(company.id, m.user_id, next))}
+                        t={t}
+                      />
+                    )}
+                    {/* Phạm vi bản ghi. Chỉ hiện khi CSDL đã có cột (m.data_scope !== undefined). */}
+                    {role === "owner" && m.role !== "owner" && m.data_scope !== undefined && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 10.5, color: C.sub }}>{t("mem.scope")}</span>
+                        {SCOPES.map((s) => {
+                          const on = (m.data_scope || "all") === s;
+                          return (
+                            <button key={s} disabled={mBusy === "sc" + m.user_id}
+                              onClick={() => runM("sc" + m.user_id, () => setMemberScope(company.id, m.user_id, s))}
+                              style={{ padding: "3px 9px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, fontFamily: "inherit",
+                                cursor: "pointer", color: on ? "#06202f" : C.sub,
+                                background: on ? "#39B8D8" : "transparent",
+                                border: `1px solid ${on ? "#39B8D8" : C.line}` }}>
+                              {t("mem.scope." + s)}
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 ))}

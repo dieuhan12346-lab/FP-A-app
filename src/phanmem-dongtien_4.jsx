@@ -18,6 +18,7 @@ import { fetchForecast, sendReminder, getEmailDomain, setupEmailDomain, verifyEm
 import CashflowDataModal from "./CashflowDataModal";
 import { DEMO_MODE } from "./lib/demo";
 import { useCompany } from "./CompanyContext";
+import { listMembers } from "./lib/members";
 import { RoBadge, RoNote } from "./RoleUi";
 import { fmtMoney, fmtMoneyM, fmtMoneyCompactM, fmtCompactM, fmtCompactB } from "./lib/money";
 import CompanySettingsModal from "./CompanySettingsModal";
@@ -3172,17 +3173,49 @@ const AGENTS_PR = [
     features: ["pr.agent.collect.f1","pr.agent.collect.f2","pr.agent.collect.f3","pr.agent.collect.f4","pr.agent.collect.f5"] },
 ];
 
+/* Trục ghế — bám đúng ba vai có thật trong company_members, không bịa bậc mới:
+   owner + editor tính chung một loại ghế (đều ghi được), viewer là loại còn lại.
+   CÁC SỐ DƯỚI ĐÂY LÀ CHỖ ĐỂ ĐIỀN, chưa phải giá đã chốt — sửa ở đúng một nơi này. */
+const SEATS_PR = {
+  included: { editor: 2, viewer: 5 },      // gói nền đã gồm bấy nhiêu ghế
+  price:    { editor: 0.4, viewer: 0.15 }, // triệu đồng / ghế / tháng, tính từ ghế thứ n+1
+  max:      { editor: 50, viewer: 200 },
+};
+
 const fmt_PR = (m) => `${(m * 1e6).toLocaleString("vi-VN")}đ`;
 const fmtShort_PR = (m) => `${m.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}tr`;
 
 function PricingPlans() {
   const { t } = useT();
-  const { company } = useCompany();
+  const { company, isOwner } = useCompany();
   const currency = company?.currency || "VND";
   const fmtShort_PR = (m) => fmtCompactM(m, currency, { maximumFractionDigits: 1 });
   const [tierId, setTierId] = useState("medium"); // selected data-scale tier
   const [active, setActive] = useState(() => new Set());
   const [annual, setAnnual] = useState(false);
+  const [seats, setSeats] = useState({ editor: SEATS_PR.included.editor, viewer: SEATS_PR.included.viewer });
+  const [used, setUsed] = useState(null);   // số ghế ĐANG dùng thật; null = chưa biết
+
+  /* Đọc số ghế thật từ company_members thay vì bắt người ta tự khai. Chỉ owner đọc
+     được cả danh sách (RLS) — vai khác chỉ thấy dòng của mình, đếm ra 1 thì vô nghĩa,
+     nên không hiện "đang dùng" cho họ. */
+  useEffect(() => {
+    if (!company?.id || !isOwner) { setUsed(null); return; }
+    let alive = true;
+    listMembers(company.id).then((ms) => {
+      if (!alive) return;
+      const u = {
+        editor: ms.filter((m) => m.role === "owner" || m.role === "editor").length,
+        viewer: ms.filter((m) => m.role === "viewer").length,
+      };
+      setUsed(u);
+      setSeats({
+        editor: Math.max(u.editor, SEATS_PR.included.editor),
+        viewer: Math.max(u.viewer, SEATS_PR.included.viewer),
+      });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [company?.id, isOwner]);
 
   useEffect(() => {
     const l = document.createElement("link"); l.rel = "stylesheet";
@@ -3195,7 +3228,16 @@ function PricingPlans() {
   const scaleLabel = useMemo(() => SCALE_TIERS_PR.find((s) => s.id === tierId), [tierId]);
   const basePrice = scaleLabel.price;
   const addOns = useMemo(() => AGENTS_PR.filter((a) => active.has(a.id)).reduce((s, a) => s + a.price, 0), [active]);
-  const monthly = basePrice + addOns;
+
+  // Ghế nằm trong gói nền thì không tính tiền; chỉ tính từ ghế vượt ra.
+  const extraSeats = {
+    editor: Math.max(0, seats.editor - SEATS_PR.included.editor),
+    viewer: Math.max(0, seats.viewer - SEATS_PR.included.viewer),
+  };
+  const seatCost = extraSeats.editor * SEATS_PR.price.editor + extraSeats.viewer * SEATS_PR.price.viewer;
+  const setSeat = (k, v) => setSeats((s) => ({ ...s, [k]: Math.max(0, Math.min(SEATS_PR.max[k], v)) }));
+
+  const monthly = basePrice + seatCost + addOns;
   const billed = annual ? monthly * 12 * 0.85 : monthly; // 15% off annual
   const stageName = active.size === 0 ? t("pr.stage.starter") : active.size <= 2 ? t("pr.stage.growth") : t("pr.stage.full");
   const StageIcon = active.size === 0 ? Rocket : active.size <= 2 ? Building2 : Crown;
@@ -3284,6 +3326,23 @@ function PricingPlans() {
               </div>
             </section>
 
+            {/* ghế người dùng — trục giá thứ hai, bám vào vai có thật trong công ty */}
+            <section className="card" style={panelPr}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Users size={17} color={C_PR.violet} /><h3 style={h3Pr}>{t("pr.seats.title")}</h3>
+                {used && (
+                  <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: C_PR.violet, background: C_PR.violetSoft, padding: "3px 10px", borderRadius: 20 }}>
+                    {t("pr.seats.using", { e: used.editor, v: used.viewer })}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 12.3, color: C_PR.sub, margin: "4px 0 14px" }}>{t("pr.seats.desc")}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <SeatRow_PR kind="editor" seats={seats} extra={extraSeats} used={used} setSeat={setSeat} t={t} fmt={fmtShort_PR} color={C_PR.violet} />
+                <SeatRow_PR kind="viewer" seats={seats} extra={extraSeats} used={used} setSeat={setSeat} t={t} fmt={fmtShort_PR} color={C_PR.cyan} />
+              </div>
+            </section>
+
             {/* add-on agents */}
             <section className="card" style={panelPr}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Plus size={17} color={C_PR.gold} /><h3 style={h3Pr}>{t("pr.addon.title")}</h3></div>
@@ -3352,6 +3411,14 @@ function PricingPlans() {
               {/* line items */}
               <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 6 }}>
                 <Line_PR name={t("pr.line.base")} sub={t(scaleLabel.nameKey)} value={fmtShort_PR(basePrice)} c={C_PR.cyan} />
+                {extraSeats.editor > 0 && (
+                  <Line_PR name={t("pr.line.seats.editor")} sub={t("pr.seats.n", { n: extraSeats.editor })}
+                    value={`+${fmtShort_PR(extraSeats.editor * SEATS_PR.price.editor)}`} c={C_PR.violet} />
+                )}
+                {extraSeats.viewer > 0 && (
+                  <Line_PR name={t("pr.line.seats.viewer")} sub={t("pr.seats.n", { n: extraSeats.viewer })}
+                    value={`+${fmtShort_PR(extraSeats.viewer * SEATS_PR.price.viewer)}`} c={C_PR.cyan} />
+                )}
                 {AGENTS_PR.filter((a) => active.has(a.id)).map((a) => <Line_PR key={a.id} name={t(a.nameKey)} value={`+${fmtShort_PR(a.price)}`} c={a.color} />)}
                 {active.size === 0 && <div style={{ fontSize: 11.5, color: C_PR.sub, fontStyle: "italic", padding: "6px 2px" }}>{t("pr.no.agents")}</div>}
               </div>
@@ -3394,6 +3461,47 @@ function PricingPlans() {
 
 const panelPr = { background: C_PR.panel, border: `1px solid ${C_PR.line}`, borderRadius: 18, padding: "18px 18px 16px", boxShadow: "0 18px 40px -28px rgba(0,0,0,.7)" };
 const h3Pr = { margin: 0, fontFamily: DISP_PR, fontWeight: 700, fontSize: 16, letterSpacing: "-0.01em", color: C_PR.txt };
+
+/* Một loại ghế: số ghế đang chọn + phần vượt gói nền. Nút trừ chặn ở SỐ NGƯỜI ĐANG
+   CÓ THẬT — không cho hạ xuống dưới số thành viên hiện tại, vì đó là hoá đơn không
+   khớp với thực tế đang dùng. */
+function SeatRow_PR({ kind, seats, extra, used, setSeat, t, fmt, color }) {
+  const n = seats[kind];
+  const floor = used?.[kind] ?? 0;
+  const incl = SEATS_PR.included[kind];
+  const x = extra[kind];
+  const canDown = n > floor && n > 0;
+  const canUp = n < SEATS_PR.max[kind];
+  const step = (on) => ({
+    width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", flex: "0 0 auto",
+    border: `1px solid ${C_PR.line}`, background: "transparent", color: on ? C_PR.txt : C_PR.line,
+    cursor: on ? "pointer" : "not-allowed", fontFamily: "inherit",
+  });
+  const Ic = kind === "editor" ? Database : Users;
+  return (
+    <div style={{ display: "flex", gap: 13, alignItems: "center", padding: "13px 15px", borderRadius: 14, background: C_PR.panel2, border: `1px solid ${C_PR.line}` }}>
+      <div style={{ width: 40, height: 40, borderRadius: 11, flex: "0 0 auto", display: "grid", placeItems: "center", background: color + "1e" }}>
+        <Ic size={19} color={color} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 13.5 }}>{t("pr.seats." + kind)}</div>
+        <div style={{ fontSize: 11.5, color: C_PR.sub, marginTop: 2 }}>{t("pr.seats." + kind + ".sub")}</div>
+      </div>
+      <div style={{ textAlign: "right", flex: "0 0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, justifyContent: "flex-end" }}>
+          <button className="btn" onClick={() => canDown && setSeat(kind, n - 1)} disabled={!canDown} style={step(canDown)}><Minus size={14} /></button>
+          <span className="tnum" style={{ minWidth: 26, textAlign: "center", fontWeight: 800, fontSize: 15, color: C_PR.txt }}>{n}</span>
+          <button className="btn" onClick={() => canUp && setSeat(kind, n + 1)} disabled={!canUp} style={step(canUp)}><Plus size={14} /></button>
+        </div>
+        <div style={{ fontSize: 10.5, color: x > 0 ? color : C_PR.sub, marginTop: 5, whiteSpace: "nowrap" }}>
+          {x > 0
+            ? t("pr.seats.extra", { incl, n: x, p: fmt(SEATS_PR.price[kind]) })
+            : t("pr.seats.free", { incl })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Line_PR({ name, sub, value, c }) {
   return (
@@ -4059,6 +4167,10 @@ function CashflowDataPage({ go }) {
   return <CashflowDataModal asPage company={company} companyId={company?.id} data={cf} onChanged={reload} onClose={() => go?.("cashflow")} />;
 }
 
+/* Chỉ trang gói giá là luôn hiện — nó tự ẩn phần quản trị theo vai.
+   Dòng tiền KHÔNG nằm đây: dashboard tổng quan là thứ phải cấp quyền mới xem. */
+const NAV_CORE = ["pricing"];
+
 const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
   { id: "fpa", key: "fpa", icon: Brain, c: C.cyan },
@@ -4079,8 +4191,13 @@ export default function App() {
 
 function AppShell() {
   const { t } = useT();
-  const { role } = useCompany();
+  const { role, canUse } = useCompany();
   const [page, setPage] = useState("cashflow");
+  // Agent bị khoá thì bỏ khỏi thanh bên; NAV_CORE luôn hiện.
+  const nav = useMemo(() => NAV.filter((n) => NAV_CORE.includes(n.id) || canUse(n.id)), [canUse]);
+  const noAgent = nav.every((n) => NAV_CORE.includes(n.id));   // chưa được cấp agent nào
+  // Đang đứng ở trang vừa bị thu quyền (owner đổi phân quyền lúc đang mở) → về trang đầu còn mở.
+  useEffect(() => { if (!nav.some((n) => n.id === page)) setPage(nav[0]?.id || "pricing"); }, [nav, page]);
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
   const [userMenu, setUserMenu] = useState(false);
@@ -4151,7 +4268,7 @@ function AppShell() {
         {showCompanySettings && <CompanySettingsModal onClose={() => setShowCompanySettings(false)} />}
 
         <nav style={{ flex: 1, padding: "10px 10px", display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
-          {NAV.map((n) => {
+          {nav.map((n) => {
             const on = n.id === page; const Ic = n.icon;
             return (
               <button key={n.id} className="navi" onClick={() => setPage(n.id)} title={t("nav." + n.key)}
@@ -4193,6 +4310,17 @@ function AppShell() {
 
         {/* page body */}
         <div style={{ padding: "20px clamp(16px,3vw,30px)", flex: 1 }}>
+          {/* Người vừa tham gia chưa được owner cấp agent nào — nói rõ thay vì để họ
+              nhìn thanh bên trống rồi tưởng app hỏng. */}
+          {noAgent && (
+            <div style={{ maxWidth: 620, margin: "0 auto 18px", padding: "18px 20px", borderRadius: 14, background: C.panel, border: `1px dashed ${C.line}`, display: "flex", gap: 13, alignItems: "flex-start" }}>
+              <ShieldCheck size={20} color={C.gold} style={{ flex: "0 0 auto", marginTop: 1 }} />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 4 }}>{t("noagent.title")}</div>
+                <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.6 }}>{t("noagent.desc")}</div>
+              </div>
+            </div>
+          )}
           {page === "cashflow" ? <CashflowDashboard go={setPage} />
             : page === "dataentry" ? <CashflowDataPage go={setPage} />
             : page === "ops" ? <OpsCashflow />

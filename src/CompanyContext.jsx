@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { fetchMyCompany } from "./lib/company";
-import { myRole } from "./lib/members";
+import { myAccess } from "./lib/members";
 import { supabase } from "./lib/supabase";
 import { applyCompanyUiLanguage } from "./i18n";
 
-export const CompanyContext = createContext({ company: null, role: null, canEdit: true, isOwner: true, loading: true, refresh: async () => {} });
+export const CompanyContext = createContext({ company: null, role: null, agents: null, canEdit: true, isOwner: true, canUse: () => true, loading: true, refresh: async () => {} });
 
 export function useCompany() {
   return useContext(CompanyContext);
@@ -13,6 +13,7 @@ export function useCompany() {
 export function CompanyProvider({ children }) {
   const [company, setCompany] = useState(null);
   const [role, setRole] = useState(null);
+  const [agents, setAgents] = useState(null);   // null = toàn quyền agent
   const [loading, setLoading] = useState(true);
   const [fxTick, setFxTick] = useState(0);
 
@@ -24,16 +25,19 @@ export function CompanyProvider({ children }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!supabase) { setCompany(null); setRole(null); setLoading(false); return; }
+    if (!supabase) { setCompany(null); setRole(null); setAgents(null); setLoading(false); return; }
     setLoading(true);
     try {
       const c = await fetchMyCompany();
       setCompany(c);
       if (c) applyCompanyUiLanguage(c);
-      setRole(c ? await myRole(c.id) : null);
+      const a = c ? await myAccess(c.id) : { role: null, agents: null };
+      setRole(a.role);
+      setAgents(a.agents);
     } catch {
       setCompany(null);
       setRole(null);
+      setAgents(null);
     } finally {
       setLoading(false);
     }
@@ -47,5 +51,9 @@ export function CompanyProvider({ children }) {
   const canEdit = role !== "viewer";
   const isOwner = role !== "viewer" && role !== "editor";
 
-  return <CompanyContext.Provider value={{ company, role, canEdit, isOwner, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
+  /* Được vào agent nào. Owner luôn vào hết; agents null (chưa phân, hoặc CSDL chưa
+     có cột) cũng mở hết — cùng quy ước fail-open, chốt chặn thật là has_agent() ở RLS. */
+  const canUse = (id) => isOwner || agents == null || agents.includes(id);
+
+  return <CompanyContext.Provider value={{ company, role, agents, canEdit, isOwner, canUse, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
 }

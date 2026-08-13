@@ -6,6 +6,49 @@ import { supabase } from "./supabase";
 
 export const ROLES = ["owner", "editor", "viewer"];
 
+/* Agent phân quyền được. Trùng id với NAV trong app.
+   Dòng tiền và FP&A nằm trong danh sách này vì chúng LÀ báo cáo tổng quan toàn công
+   ty — thứ mà nhân sự cấp nhân viên không mặc nhiên được xem. */
+export const AGENTS = ["cashflow", "fpa", "ops", "credit", "collect", "invoice"];
+
+/* Phạm vi bản ghi nhìn thấy trong một agent: cả công ty, hay chỉ phần mình nhập. */
+export const SCOPES = ["all", "own"];
+
+/** Đặt phạm vi dữ liệu cho một thành viên. */
+export async function setMemberScope(companyId, userId, scope) {
+  if (!SCOPES.includes(scope)) throw new Error("Phạm vi không hợp lệ");
+  const { error } = await db().from("company_members")
+    .update({ data_scope: scope }).eq("company_id", companyId).eq("user_id", userId);
+  if (error) throw error;
+}
+
+/** Vai + danh sách agent của chính mình. agents = null nghĩa là toàn quyền. */
+export async function myAccess(companyId) {
+  if (!supabase || !companyId) return { role: null, agents: null };
+  const { data: u } = await supabase.auth.getUser();
+  const uid = u?.user?.id;
+  if (!uid) return { role: null, agents: null };
+  const { data, error } = await supabase
+    .from("company_members").select("role, agents")
+    .eq("company_id", companyId).eq("user_id", uid).maybeSingle();
+  if (error) {
+    // CSDL chưa có cột agents → thử lại chỉ với role, đừng khoá người đang dùng
+    const { data: d2 } = await supabase
+      .from("company_members").select("role")
+      .eq("company_id", companyId).eq("user_id", uid).maybeSingle();
+    return { role: d2?.role || null, agents: null };
+  }
+  return { role: data?.role || null, agents: data?.agents ?? null };
+}
+
+/** Đặt danh sách agent cho một thành viên. null = toàn quyền. */
+export async function setMemberAgents(companyId, userId, agents) {
+  const list = agents === null ? null : AGENTS.filter((a) => agents.includes(a));
+  const { error } = await db().from("company_members")
+    .update({ agents: list }).eq("company_id", companyId).eq("user_id", userId);
+  if (error) throw error;
+}
+
 function db() {
   if (!supabase) throw new Error("Bản dựng này chưa cấu hình Supabase");
   return supabase;
@@ -24,14 +67,27 @@ export async function myRole(companyId) {
   return data?.role || null;
 }
 
-/** Danh sách thành viên. Owner thấy tất cả; vai khác chỉ thấy dòng của mình (do RLS). */
+/** Danh sách thành viên. Owner thấy tất cả; vai khác chỉ thấy dòng của mình (do RLS).
+ *  Chọn cột theo kiểu lùi dần: CSDL chưa chạy migration mới thì thiếu agents/data_scope,
+ *  select thẳng sẽ lỗi và danh sách thành viên im lặng thành rỗng — đã dính đúng lỗi
+ *  này một lần với cột email, không lặp lại. */
 export async function listMembers(companyId) {
   if (!supabase || !companyId) return [];
-  const { data, error } = await supabase
-    .from("company_members").select("user_id, role, email, created_at")
-    .eq("company_id", companyId).order("created_at");
-  if (error) throw error;
-  return data || [];
+  const COLS = [
+    "user_id, role, email, agents, data_scope, created_at",
+    "user_id, role, email, agents, created_at",
+    "user_id, role, email, created_at",
+    "user_id, role, created_at",
+  ];
+  let last;
+  for (const cols of COLS) {
+    const { data, error } = await supabase
+      .from("company_members").select(cols)
+      .eq("company_id", companyId).order("created_at");
+    if (!error) return data || [];
+    last = error;
+  }
+  throw last;
 }
 
 /** Lời mời đang chờ của công ty (chỉ owner đọc được). */
