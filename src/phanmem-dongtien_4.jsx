@@ -4167,9 +4167,10 @@ function CashflowDataPage({ go }) {
   return <CashflowDataModal asPage company={company} companyId={company?.id} data={cf} onChanged={reload} onClose={() => go?.("cashflow")} />;
 }
 
-/* Chỉ trang gói giá là luôn hiện — nó tự ẩn phần quản trị theo vai.
-   Dòng tiền KHÔNG nằm đây: dashboard tổng quan là thứ phải cấp quyền mới xem. */
-const NAV_CORE = ["pricing"];
+/* Trang chỉ Chủ sở hữu vào được, không phụ thuộc agent. Gói giá hiện số ghế và tiền
+   — người nhập liệu không có việc gì ở đó.
+   Dòng tiền KHÔNG nằm đây: nó là dashboard tổng quan, phải cấp agent mới xem. */
+const NAV_OWNER = ["pricing"];
 
 const NAV = [
   { id: "cashflow", key: "cashflow", icon: LayoutDashboard, c: C.gold },
@@ -4191,23 +4192,28 @@ export default function App() {
 
 function AppShell() {
   const { t } = useT();
-  const { role, canUse } = useCompany();
+  const { role, canUse, isOwner } = useCompany();
   const [page, setPage] = useState("cashflow");
-  // Agent bị khoá thì bỏ khỏi thanh bên; NAV_CORE luôn hiện.
-  const nav = useMemo(() => NAV.filter((n) => NAV_CORE.includes(n.id) || canUse(n.id)), [canUse]);
-  const noAgent = nav.every((n) => NAV_CORE.includes(n.id));   // chưa được cấp agent nào
+  // Agent bị khoá thì bỏ khỏi thanh bên; trang của owner thì theo vai, không theo agent.
+  const nav = useMemo(
+    () => NAV.filter((n) => (NAV_OWNER.includes(n.id) ? isOwner : canUse(n.id))),
+    [canUse, isOwner]
+  );
+  const noAgent = nav.length === 0;   // chưa được cấp gì: thanh bên trống, chỉ hiện lời nhắn
 
   /* Trang này có mở được không. Lưu ý "dataentry" KHÔNG nằm trong NAV — nó chỉ tới
      được bằng nút "Nhập số liệu" trên Dòng tiền, nên phải quy về agent cashflow.
      Thiếu nhánh đó thì mọi trang ngoài NAV bị coi là cấm và bị đá về ngay khi mở. */
   const canOpen = (id) => {
-    if (NAV_CORE.includes(id)) return true;
+    if (NAV_OWNER.includes(id)) return isOwner;
     if (id === "dataentry") return canUse("cashflow");
     return canUse(id);
   };
-  // Đang đứng ở trang vừa bị thu quyền (owner đổi phân quyền lúc đang mở) → về trang đầu còn mở.
+  /* Đang đứng ở trang vừa bị thu quyền (owner đổi phân quyền lúc đang mở) → về trang
+     đầu còn mở. Không còn trang nào thì để nguyên: phần thân sẽ chỉ hiện lời nhắn,
+     đá về "pricing" là đá vào đúng trang họ cũng không mở được. */
   // eslint-disable-next-line
-  useEffect(() => { if (!canOpen(page)) setPage(nav[0]?.id || "pricing"); }, [nav, page]);
+  useEffect(() => { if (!canOpen(page) && nav.length > 0) setPage(nav[0].id); }, [nav, page]);
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
   const [userMenu, setUserMenu] = useState(false);
@@ -4322,16 +4328,15 @@ function AppShell() {
         <div style={{ padding: "20px clamp(16px,3vw,30px)", flex: 1 }}>
           {/* Người vừa tham gia chưa được owner cấp agent nào — nói rõ thay vì để họ
               nhìn thanh bên trống rồi tưởng app hỏng. */}
-          {noAgent && (
-            <div style={{ maxWidth: 620, margin: "0 auto 18px", padding: "18px 20px", borderRadius: 14, background: C.panel, border: `1px dashed ${C.line}`, display: "flex", gap: 13, alignItems: "flex-start" }}>
+          {noAgent ? (
+            <div style={{ maxWidth: 620, margin: "40px auto", padding: "18px 20px", borderRadius: 14, background: C.panel, border: `1px dashed ${C.line}`, display: "flex", gap: 13, alignItems: "flex-start" }}>
               <ShieldCheck size={20} color={C.gold} style={{ flex: "0 0 auto", marginTop: 1 }} />
               <div>
                 <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 4 }}>{t("noagent.title")}</div>
                 <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.6 }}>{t("noagent.desc")}</div>
               </div>
             </div>
-          )}
-          {page === "cashflow" ? <CashflowDashboard go={setPage} />
+          ) : page === "cashflow" ? <CashflowDashboard go={setPage} />
             : page === "dataentry" ? <CashflowDataPage go={setPage} />
             : page === "ops" ? <OpsCashflow />
             : page === "fpa" ? <FpaAutomation go={setPage} />

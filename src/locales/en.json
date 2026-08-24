@@ -897,7 +897,7 @@
   "audit.rows": "{n} rows",
   "mem.needMigration": "Inviting is unavailable: the database is missing the invites table. Run supabase/migrations/011_roles_invites.sql, then reopen.",
   "noagent.title": "No agent access yet",
-  "noagent.desc": "You have joined the company, but the Owner has not opened any agent for you. Ask them to open Company settings, find your name in the member list and tick the agents you need.",
+  "noagent.desc": "You have joined the company, but the Owner has not opened any agent for you. Ask them to open Company settings, find your name in the member list and tick the agents you need, then reload this page.",
   "mem.agents": "Agents:",
   "mem.invite.agents": "Grant agents:",
   "mem.scope": "Data:",

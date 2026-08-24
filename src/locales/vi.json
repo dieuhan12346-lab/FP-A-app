@@ -897,7 +897,7 @@
   "audit.rows": "{n} dòng",
   "mem.needMigration": "Chưa mời thêm người được: cơ sở dữ liệu thiếu bảng lời mời. Chạy supabase/migrations/011_roles_invites.sql rồi mở lại.",
   "noagent.title": "Chưa được cấp quyền vào agent nào",
-  "noagent.desc": "Bạn đã vào công ty nhưng Chủ sở hữu chưa mở agent nào cho bạn. Nhờ họ vào Cài đặt công ty, tìm tên bạn trong danh sách thành viên và tick những agent bạn cần dùng.",
+  "noagent.desc": "Bạn đã vào công ty nhưng Chủ sở hữu chưa mở agent nào cho bạn. Nhờ họ vào Cài đặt công ty, tìm tên bạn trong danh sách thành viên và tick những agent bạn cần dùng. Tick xong bạn tải lại trang là thấy.",
   "mem.agents": "Agent:",
   "mem.invite.agents": "Cấp sẵn agent:",
   "mem.scope": "Dữ liệu:",
