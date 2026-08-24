@@ -8,3 +8,6 @@ test-invoice.cjs
 
 # Supabase CLI local link state
 supabase/.temp/
+
+# bản sao lưu env khi đổi project
+*.bak

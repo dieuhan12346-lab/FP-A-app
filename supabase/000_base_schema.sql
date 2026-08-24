@@ -82,6 +82,10 @@ create table if not exists public.company_invites (
   created_at  timestamptz not null default now(),
   expires_at  timestamptz not null default (now() + interval '14 days'),
   accepted_at timestamptz,
+  -- Quyền cấp sẵn lúc mời, accept_invite chép thẳng sang company_members. Owner
+  -- quyết một lần thay vì người kia vào thấy màn hình trống rồi phải nhắn xin.
+  agents      text[] not null default '{}',
+  data_scope  text not null default 'all' check (data_scope in ('all','own')),
   unique (company_id, email)
 );
 create index if not exists company_invites_email on public.company_invites (lower(email));
@@ -555,10 +559,13 @@ begin
   -- do nothing, KHÔNG do update: người ĐÃ là thành viên mà nhận lời mời thì giữ
   -- nguyên vai. Ghi đè thì chủ sở hữu tự mời email mình rồi bấm Tham gia là tự hạ
   -- mình xuống editor — owner duy nhất làm vậy là công ty còn zero owner, kẹt hẳn.
-  -- agents = '{}' → đặc quyền tối thiểu: vào được công ty, chưa vào được agent nào,
-  -- owner mở dần. '{}' KHÁC null (null = toàn quyền) — cả điểm mấu chốt nằm ở đây.
-  insert into public.company_members (company_id, user_id, role, email, agents)
-  values (inv.company_id, auth.uid(), inv.role, auth.jwt() ->> 'email', '{}')
+  -- Vai, agent và phạm vi đều lấy từ CHÍNH LỜI MỜI — client không tự khai được.
+  -- '{}' khác null: null = toàn quyền (thành viên đời cũ), '{}' = chưa cấp agent nào.
+  -- do nothing: người đã là thành viên thì giữ nguyên quyền, nhận lời mời không
+  -- được phép sửa quyền của họ.
+  insert into public.company_members (company_id, user_id, role, email, agents, data_scope)
+  values (inv.company_id, auth.uid(), inv.role, auth.jwt() ->> 'email',
+          coalesce(inv.agents, '{}'), coalesce(inv.data_scope, 'all'))
   on conflict (company_id, user_id) do nothing;
 
   update public.company_invites set accepted_at = now() where id = inv_id;

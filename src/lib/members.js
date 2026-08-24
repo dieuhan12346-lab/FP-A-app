@@ -93,23 +93,39 @@ export async function listMembers(companyId) {
 /** Lời mời đang chờ của công ty (chỉ owner đọc được). */
 export async function listInvites(companyId) {
   if (!supabase || !companyId) return [];
-  const { data, error } = await supabase
-    .from("company_invites").select("id, email, role, created_at, expires_at, accepted_at")
-    .eq("company_id", companyId).is("accepted_at", null).order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data || []).filter((i) => new Date(i.expires_at) > new Date());
+  const COLS = [
+    "id, email, role, agents, data_scope, created_at, expires_at, accepted_at",
+    "id, email, role, created_at, expires_at, accepted_at",   // CSDL chưa chạy 020
+  ];
+  let last;
+  for (const cols of COLS) {
+    const { data, error } = await supabase
+      .from("company_invites").select(cols)
+      .eq("company_id", companyId).is("accepted_at", null).order("created_at", { ascending: false });
+    if (!error) return (data || []).filter((i) => new Date(i.expires_at) > new Date());
+    last = error;
+  }
+  throw last;
 }
 
-/** Mời một người vào công ty. Mời lại cùng email thì ghi đè vai và gia hạn. */
-export async function inviteMember(companyId, email, role = "viewer") {
+/** Mời một người, KÈM quyền họ sẽ có khi vào. Mời lại cùng email thì ghi đè và gia hạn.
+ *  Quyền nằm trên lời mời để accept_invite chép sang — client không tự khai được. */
+export async function inviteMember(companyId, email, role = "viewer", agents = [], scope = "all") {
   const mail = String(email || "").trim().toLowerCase();
   if (!mail.includes("@")) throw new Error("Email không hợp lệ");
   if (!ROLES.includes(role)) throw new Error("Vai trò không hợp lệ");
+  if (!SCOPES.includes(scope)) throw new Error("Phạm vi không hợp lệ");
   const expires = new Date(Date.now() + 14 * 864e5).toISOString();
-  const { error } = await db().from("company_invites").upsert(
-    { company_id: companyId, email: mail, role, expires_at: expires, accepted_at: null },
-    { onConflict: "company_id,email" }
-  );
+  const row = {
+    company_id: companyId, email: mail, role, expires_at: expires, accepted_at: null,
+    agents: AGENTS.filter((a) => (agents || []).includes(a)), data_scope: scope,
+  };
+  let { error } = await db().from("company_invites").upsert(row, { onConflict: "company_id,email" });
+  if (error) {
+    // CSDL chưa chạy 020 → mời được nhưng chưa mang theo quyền, owner tick sau
+    const { agents: _a, data_scope: _s, ...bare } = row;
+    ({ error } = await db().from("company_invites").upsert(bare, { onConflict: "company_id,email" }));
+  }
   if (error) throw error;
 }
 

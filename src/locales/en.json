@@ -899,6 +899,7 @@
   "noagent.title": "No agent access yet",
   "noagent.desc": "You have joined the company, but the Owner has not opened any agent for you. Ask them to open Company settings, find your name in the member list and tick the agents you need.",
   "mem.agents": "Agents:",
+  "mem.invite.agents": "Grant agents:",
   "mem.scope": "Data:",
   "mem.scope.all": "Whole company",
   "mem.scope.own": "Only their own entries",

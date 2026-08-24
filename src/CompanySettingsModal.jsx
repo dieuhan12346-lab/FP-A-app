@@ -15,13 +15,15 @@ const C = { panel: "#111E33", panel2: "rgba(255,255,255,.04)", line: "rgba(255,2
    null = toàn quyền (khác hẳn mảng rỗng = không vào được agent nào). Giữ phân biệt
    này vì thành viên cũ chưa phân agent đều đang null — coi null như rỗng là khoá
    sạch mọi người ngay lần đầu mở màn hình. */
-function AgentPicker({ value, busy, onChange, t }) {
+function AgentPicker({ value, busy, onChange, t, allowAll = true, label }) {
   const all = value == null;
   const set = new Set(all ? AGENTS : value);
   const toggle = (id) => {
     const next = new Set(all ? AGENTS : value);
     next.has(id) ? next.delete(id) : next.add(id);
-    onChange(next.size === AGENTS.length ? null : [...next]);
+    // Ở ô mời, chọn hết KHÔNG được quy về null: null nghĩa là "toàn quyền vĩnh viễn",
+    // khác hẳn "được cấp đúng 6 agent hiện có". Chỉ dòng thành viên mới dùng null.
+    onChange(allowAll && next.size === AGENTS.length ? null : [...next]);
   };
   const chip = (on) => ({
     padding: "3px 9px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, fontFamily: "inherit",
@@ -32,11 +34,33 @@ function AgentPicker({ value, busy, onChange, t }) {
   });
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.line}`, alignItems: "center" }}>
-      <span style={{ fontSize: 10.5, color: C.sub, marginRight: 2 }}>{t("mem.agents")}</span>
+      <span style={{ fontSize: 10.5, color: C.sub, marginRight: 2 }}>{label || t("mem.agents")}</span>
       {AGENTS.map((id) => (
         <button key={id} disabled={busy} onClick={() => toggle(id)} style={chip(set.has(id))}>{t("nav." + id)}</button>
       ))}
       {set.size === 0 && <span style={{ fontSize: 10.5, color: C.red }}>{t("mem.agents.none")}</span>}
+    </div>
+  );
+}
+
+/** Phạm vi dữ liệu: toàn công ty ↔ chỉ phần mình nhập. */
+function ScopePicker({ value, busy, onChange, t }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 10.5, color: C.sub }}>{t("mem.scope")}</span>
+      {SCOPES.map((s) => {
+        const on = (value || "all") === s;
+        return (
+          <button key={s} disabled={busy} onClick={() => onChange(s)}
+            style={{ padding: "3px 9px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, fontFamily: "inherit",
+              cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
+              color: on ? "#06202f" : C.sub,
+              background: on ? "#39B8D8" : "transparent",
+              border: `1px solid ${on ? "#39B8D8" : C.line}` }}>
+            {t("mem.scope." + s)}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -73,6 +97,8 @@ export default function CompanySettingsModal({ onClose }) {
   const [invitesOk, setInvitesOk] = useState(true);   // false = CSDL chưa chạy migration 011
   const [invEmail, setInvEmail] = useState("");
   const [invRole, setInvRole] = useState("editor");
+  const [invAgents, setInvAgents] = useState([]);   // agent cấp sẵn khi họ nhận lời mời
+  const [invScope, setInvScope] = useState("all");
   const [inviteMsg, setInviteMsg] = useState(null);   // { ok, text } sau khi mời
   const [mBusy, setMBusy] = useState("");
   // Cùng quy ước với CompanyContext: chưa biết vai thì mở, đừng khoá nhầm người đang dùng bình thường.
@@ -98,7 +124,7 @@ export default function CompanySettingsModal({ onClose }) {
   };
   const doInvite = () => runM("invite", async () => {
     const mail = invEmail.trim().toLowerCase();
-    await inviteMember(company.id, mail, invRole);
+    await inviteMember(company.id, mail, invRole, invAgents, invScope);
     setInvEmail(""); setInviteMsg("");
     // Lời mời đã ghi xong. Thư gửi hỏng thì KHÔNG huỷ lời mời — người được mời vẫn
     // vào được bằng cách đăng nhập đúng email này, nên chỉ báo để owner tự nhắn tay.
@@ -246,21 +272,9 @@ export default function CompanySettingsModal({ onClose }) {
                     )}
                     {/* Phạm vi bản ghi. Chỉ hiện khi CSDL đã có cột (m.data_scope !== undefined). */}
                     {role === "owner" && m.role !== "owner" && m.data_scope !== undefined && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 10.5, color: C.sub }}>{t("mem.scope")}</span>
-                        {SCOPES.map((s) => {
-                          const on = (m.data_scope || "all") === s;
-                          return (
-                            <button key={s} disabled={mBusy === "sc" + m.user_id}
-                              onClick={() => runM("sc" + m.user_id, () => setMemberScope(company.id, m.user_id, s))}
-                              style={{ padding: "3px 9px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, fontFamily: "inherit",
-                                cursor: "pointer", color: on ? "#06202f" : C.sub,
-                                background: on ? "#39B8D8" : "transparent",
-                                border: `1px solid ${on ? "#39B8D8" : C.line}` }}>
-                              {t("mem.scope." + s)}
-                            </button>
-                          );
-                        })}
+                      <div style={{ marginTop: 7 }}>
+                        <ScopePicker value={m.data_scope} busy={mBusy === "sc" + m.user_id} t={t}
+                          onChange={(s) => runM("sc" + m.user_id, () => setMemberScope(company.id, m.user_id, s))} />
                       </div>
                     )}
                   </div>
@@ -278,14 +292,25 @@ export default function CompanySettingsModal({ onClose }) {
                   {invites.length > 0 && (
                     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                       {invites.map((i) => (
-                        <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 9, background: "transparent", border: `1px dashed ${C.line}` }}>
-                          <Mail size={12} color={C.sub} style={{ flex: "0 0 auto" }} />
-                          <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.email}</span>
-                          <span style={{ fontSize: 11, color: C.sub, flex: "0 0 auto" }}>{t("mem.role." + i.role)} · {t("mem.pending")}</span>
-                          <button onClick={() => runM("inv" + i.id, () => cancelInvite(i.id))} title={t("mem.cancelInvite")}
-                            style={{ display: "grid", placeItems: "center", width: 24, height: 24, borderRadius: 6, border: "none", cursor: "pointer", color: C.sub, background: "transparent" }}>
-                            <X size={12} />
-                          </button>
+                        <div key={i.id} style={{ padding: "7px 11px", borderRadius: 9, background: "transparent", border: `1px dashed ${C.line}` }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <Mail size={12} color={C.sub} style={{ flex: "0 0 auto" }} />
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.email}</span>
+                            <span style={{ fontSize: 11, color: C.sub, flex: "0 0 auto" }}>{t("mem.role." + i.role)} · {t("mem.pending")}</span>
+                            <button onClick={() => runM("inv" + i.id, () => cancelInvite(i.id))} title={t("mem.cancelInvite")}
+                              style={{ display: "grid", placeItems: "center", width: 24, height: 24, borderRadius: 6, border: "none", cursor: "pointer", color: C.sub, background: "transparent" }}>
+                              <X size={12} />
+                            </button>
+                          </div>
+                          {/* Quyền đã cấp sẵn — để owner nhìn lại được mình đã mời với quyền gì */}
+                          {i.agents !== undefined && (
+                            <div style={{ marginTop: 4, fontSize: 10.5, color: C.sub, lineHeight: 1.5 }}>
+                              {(i.agents || []).length > 0
+                                ? (i.agents || []).map((a) => t("nav." + a)).join(" · ")
+                                : t("mem.agents.none")}
+                              {" — "}{t("mem.scope." + (i.data_scope || "all"))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -302,6 +327,17 @@ export default function CompanySettingsModal({ onClose }) {
                       style={{ padding: "8px 15px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, color: "#06251a", background: C.green, opacity: mBusy === "invite" || !invEmail.trim() ? 0.6 : 1, fontFamily: "inherit" }}>
                       {mBusy === "invite" ? t("mem.inviting") : t("mem.invite")}
                     </button>
+                  </div>
+
+                  {/* Quyền chọn ngay lúc mời — người được mời vào là dùng được luôn,
+                      không phải nhắn owner mở thêm. allowAll=false: chọn hết vẫn là
+                      danh sách 6 agent, không quy về null (null = toàn quyền vĩnh viễn). */}
+                  <div style={{ marginTop: 9, padding: "9px 11px", borderRadius: 9, background: C.panel2, border: `1px solid ${C.line}` }}>
+                    <AgentPicker value={invAgents} allowAll={false} busy={mBusy === "invite"}
+                      onChange={setInvAgents} t={t} label={t("mem.invite.agents")} />
+                    <div style={{ marginTop: 7 }}>
+                      <ScopePicker value={invScope} busy={mBusy === "invite"} onChange={setInvScope} t={t} />
+                    </div>
                   </div>
                   {inviteMsg && (
                     <div style={{ marginTop: 8, fontSize: 11.5, color: inviteMsg.ok ? C.green : C.gold, lineHeight: 1.5 }}>
