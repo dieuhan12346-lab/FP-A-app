@@ -4196,8 +4196,18 @@ function AppShell() {
   // Agent bị khoá thì bỏ khỏi thanh bên; NAV_CORE luôn hiện.
   const nav = useMemo(() => NAV.filter((n) => NAV_CORE.includes(n.id) || canUse(n.id)), [canUse]);
   const noAgent = nav.every((n) => NAV_CORE.includes(n.id));   // chưa được cấp agent nào
+
+  /* Trang này có mở được không. Lưu ý "dataentry" KHÔNG nằm trong NAV — nó chỉ tới
+     được bằng nút "Nhập số liệu" trên Dòng tiền, nên phải quy về agent cashflow.
+     Thiếu nhánh đó thì mọi trang ngoài NAV bị coi là cấm và bị đá về ngay khi mở. */
+  const canOpen = (id) => {
+    if (NAV_CORE.includes(id)) return true;
+    if (id === "dataentry") return canUse("cashflow");
+    return canUse(id);
+  };
   // Đang đứng ở trang vừa bị thu quyền (owner đổi phân quyền lúc đang mở) → về trang đầu còn mở.
-  useEffect(() => { if (!nav.some((n) => n.id === page)) setPage(nav[0]?.id || "pricing"); }, [nav, page]);
+  // eslint-disable-next-line
+  useEffect(() => { if (!canOpen(page)) setPage(nav[0]?.id || "pricing"); }, [nav, page]);
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
   const [userMenu, setUserMenu] = useState(false);
