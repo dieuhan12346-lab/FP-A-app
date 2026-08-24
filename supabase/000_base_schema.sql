@@ -2,18 +2,19 @@
 -- 000 — SCHEMA GỐC
 --
 -- Dựng lại toàn bộ cấu trúc cơ sở dữ liệu trên một project Supabase TRỐNG.
--- Chạy file này TRƯỚC, rồi mới chạy các file trong migrations/ (nếu cần).
+-- File này ĐÃ GỘP mọi migration 001–018 — chạy MỘT MÌNH nó là đủ, KHÔNG chạy thêm
+-- gì trong migrations/. Thư mục đó chỉ để vá cơ sở dữ liệu đang chạy dở.
 --
 -- Vì sao có file này: các bảng gốc trước đây được tạo tay trên dashboard, không
--- nằm trong Git — nghĩa là không dựng lại được database từ mã nguồn. File này
--- được trích xuất từ cơ sở dữ liệu đang chạy (2026-08-13) để khắc phục.
+-- nằm trong Git — nghĩa là không dựng lại được database từ mã nguồn.
 --
--- MÔ HÌNH PHÂN QUYỀN: mọi dữ liệu nghiệp vụ cách ly theo THÀNH VIÊN CÔNG TY
---   (bảng company_members). Nhiều nhân sự cùng công ty dùng chung được số liệu.
---   Cột user_id vẫn giữ để biết ai tạo dòng nào, nhưng KHÔNG dùng để phân quyền.
+-- BA TRỤC PHÂN QUYỀN, mỗi trục trả lời một câu khác nhau:
+--   vai (role)          → được ghi, hay chỉ đọc
+--   agent (agents)      → vào được màn hình nào
+--   phạm vi (data_scope)→ thấy bản ghi cả công ty, hay chỉ phần mình nhập
 --
---   Khác với cơ sở dữ liệu cũ: ở đó 8/11 bảng cách ly theo user_id, nên trong một
---   công ty người này không thấy dữ liệu người kia nhập. Sửa nhân dịp dựng lại.
+--   Mọi dữ liệu cách ly theo THÀNH VIÊN CÔNG TY, không theo user_id. Cột user_id
+--   vẫn giữ để biết ai tạo dòng nào và để phục vụ data_scope = 'own'.
 -- ============================================================================
 
 -- ─────────────────────────── BẢNG ───────────────────────────
@@ -58,6 +59,12 @@ create table if not exists public.company_members (
   user_id      uuid not null default auth.uid() references auth.users(id) on delete cascade,
   role         text not null default 'owner' check (role in ('owner','editor','viewer')),
   email        text,                       -- lưu lại để owner biết ai là ai (client không đọc được auth.users)
+  -- Agent được phép vào: cashflow, fpa, ops, credit, collect, invoice.
+  -- null = toàn quyền, KHÁC mảng rỗng = không vào được agent nào. Người mới nhận lời
+  -- mời vào với '{}' (xem accept_invite); null chỉ còn ở thành viên tạo trước khi có cột này.
+  agents       text[],
+  -- all = thấy bản ghi toàn công ty; own = chỉ bản ghi do chính mình tạo. Owner luôn all.
+  data_scope   text not null default 'all' check (data_scope in ('all','own')),
   created_at   timestamptz not null default now(),
   last_used_at timestamptz,
   primary key (company_id, user_id)
@@ -260,6 +267,22 @@ returns boolean language sql stable security definer set search_path = public as
                    and m.role = 'owner');
 $$;
 
+-- Vào được AGENT nào. Owner luôn vào hết; agents null = toàn quyền (thành viên đời cũ).
+create or replace function public.has_agent(cid uuid, agent text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.company_members m
+                 where m.company_id = cid and m.user_id = auth.uid()
+                   and (m.role = 'owner' or m.agents is null or agent = any(m.agents)));
+$$;
+
+-- Thấy bản ghi của CẢ CÔNG TY hay chỉ phần mình nhập.
+create or replace function public.sees_all(cid uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.company_members m
+                 where m.company_id = cid and m.user_id = auth.uid()
+                   and (m.role = 'owner' or coalesce(m.data_scope, 'all') = 'all'));
+$$;
+
 -- ─────────────────── ROW LEVEL SECURITY ───────────────────
 -- Bắt buộc: thiếu phần này là mất toàn bộ cách ly dữ liệu giữa các công ty.
 
@@ -342,82 +365,126 @@ drop policy if exists "invitee reads own invite" on public.company_invites;
 create policy "invitee reads own invite" on public.company_invites for select
   using (lower(email) = lower(auth.jwt() ->> 'email'));
 
--- ── Dữ liệu nghiệp vụ: ĐỌC cho mọi thành viên, GHI cho owner + editor ──
--- viewer chỉ xem được, không tạo/sửa/xoá.
+-- ── Dữ liệu nghiệp vụ ──
+-- Ba điều kiện chồng nhau, mỗi cái trả lời một câu khác:
+--   is_member / can_edit  → vai: được đọc, hay được cả ghi
+--   has_agent             → có được vào agent chứa dữ liệu này không
+--   sees_all              → thấy bản ghi cả công ty, hay chỉ phần mình nhập
+--
+-- Dòng tiền (receivables, payables, transactions) CỐ Ý không kiểm has_agent: mấy
+-- bảng này là đầu vào chung của FP&A, Nhắc nợ và Chấm điểm — siết theo agent ở đây
+-- là mấy agent kia mù luôn. Việc ẩn báo cáo tổng quan làm ở tầng giao diện.
 
 drop policy if exists "own receivables" on public.receivables;
 drop policy if exists "company receivables" on public.receivables;
 drop policy if exists "read receivables" on public.receivables;
-create policy "read receivables" on public.receivables for select using (public.is_member(company_id));
+create policy "read receivables" on public.receivables for select
+  using (public.is_member(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "insert receivables" on public.receivables;
-create policy "insert receivables" on public.receivables for insert with check (public.can_edit(company_id));
+create policy "insert receivables" on public.receivables for insert
+  with check (public.can_edit(company_id));
 drop policy if exists "update receivables" on public.receivables;
-create policy "update receivables" on public.receivables for update using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+create policy "update receivables" on public.receivables for update
+  using (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()))
+  with check (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "delete receivables" on public.receivables;
-create policy "delete receivables" on public.receivables for delete using (public.can_edit(company_id));
+create policy "delete receivables" on public.receivables for delete
+  using (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 
 drop policy if exists "own payables" on public.payables;
 drop policy if exists "company payables" on public.payables;
 drop policy if exists "read payables" on public.payables;
-create policy "read payables" on public.payables for select using (public.is_member(company_id));
+create policy "read payables" on public.payables for select
+  using (public.is_member(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "insert payables" on public.payables;
-create policy "insert payables" on public.payables for insert with check (public.can_edit(company_id));
+create policy "insert payables" on public.payables for insert
+  with check (public.can_edit(company_id));
 drop policy if exists "update payables" on public.payables;
-create policy "update payables" on public.payables for update using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+create policy "update payables" on public.payables for update
+  using (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()))
+  with check (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "delete payables" on public.payables;
-create policy "delete payables" on public.payables for delete using (public.can_edit(company_id));
+create policy "delete payables" on public.payables for delete
+  using (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 
+-- Số dư đầu kỳ: MỘT dòng của cả công ty, không phải bản ghi của ai → không theo scope.
 drop policy if exists "own cashflow_settings" on public.cashflow_settings;
 drop policy if exists "company cashflow_settings" on public.cashflow_settings;
 drop policy if exists "read cashflow_settings" on public.cashflow_settings;
-create policy "read cashflow_settings" on public.cashflow_settings for select using (public.is_member(company_id));
+create policy "read cashflow_settings" on public.cashflow_settings for select
+  using (public.is_member(company_id));
 drop policy if exists "insert cashflow_settings" on public.cashflow_settings;
-create policy "insert cashflow_settings" on public.cashflow_settings for insert with check (public.can_edit(company_id));
+create policy "insert cashflow_settings" on public.cashflow_settings for insert
+  with check (public.can_edit(company_id));
 drop policy if exists "update cashflow_settings" on public.cashflow_settings;
-create policy "update cashflow_settings" on public.cashflow_settings for update using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+create policy "update cashflow_settings" on public.cashflow_settings for update
+  using (public.can_edit(company_id)) with check (public.can_edit(company_id));
 drop policy if exists "delete cashflow_settings" on public.cashflow_settings;
-create policy "delete cashflow_settings" on public.cashflow_settings for delete using (public.can_edit(company_id));
+create policy "delete cashflow_settings" on public.cashflow_settings for delete
+  using (public.can_edit(company_id));
 
 drop policy if exists "own transactions" on public.transactions;
 drop policy if exists "company transactions" on public.transactions;
 drop policy if exists "read transactions" on public.transactions;
-create policy "read transactions" on public.transactions for select using (public.is_member(company_id));
+create policy "read transactions" on public.transactions for select
+  using (public.is_member(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "insert transactions" on public.transactions;
-create policy "insert transactions" on public.transactions for insert with check (public.can_edit(company_id));
+create policy "insert transactions" on public.transactions for insert
+  with check (public.can_edit(company_id));
 drop policy if exists "update transactions" on public.transactions;
-create policy "update transactions" on public.transactions for update using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+create policy "update transactions" on public.transactions for update
+  using (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()))
+  with check (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "delete transactions" on public.transactions;
-create policy "delete transactions" on public.transactions for delete using (public.can_edit(company_id));
+create policy "delete transactions" on public.transactions for delete
+  using (public.can_edit(company_id) and (public.sees_all(company_id) or user_id = auth.uid()));
 
+-- Đọc hoá đơn: kiểm cả agent lẫn phạm vi.
 drop policy if exists "own invoice_uploads" on public.invoice_uploads;
 drop policy if exists "company invoice_uploads" on public.invoice_uploads;
 drop policy if exists "read invoice_uploads" on public.invoice_uploads;
-create policy "read invoice_uploads" on public.invoice_uploads for select using (public.is_member(company_id));
+create policy "read invoice_uploads" on public.invoice_uploads for select
+  using (public.is_member(company_id) and public.has_agent(company_id, 'invoice')
+         and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "insert invoice_uploads" on public.invoice_uploads;
-create policy "insert invoice_uploads" on public.invoice_uploads for insert with check (public.can_edit(company_id));
+create policy "insert invoice_uploads" on public.invoice_uploads for insert
+  with check (public.can_edit(company_id) and public.has_agent(company_id, 'invoice'));
 drop policy if exists "update invoice_uploads" on public.invoice_uploads;
-create policy "update invoice_uploads" on public.invoice_uploads for update using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+create policy "update invoice_uploads" on public.invoice_uploads for update
+  using (public.can_edit(company_id) and public.has_agent(company_id, 'invoice')
+         and (public.sees_all(company_id) or user_id = auth.uid()))
+  with check (public.can_edit(company_id) and public.has_agent(company_id, 'invoice')
+         and (public.sees_all(company_id) or user_id = auth.uid()));
 drop policy if exists "delete invoice_uploads" on public.invoice_uploads;
-create policy "delete invoice_uploads" on public.invoice_uploads for delete using (public.can_edit(company_id));
+create policy "delete invoice_uploads" on public.invoice_uploads for delete
+  using (public.can_edit(company_id) and public.has_agent(company_id, 'invoice')
+         and (public.sees_all(company_id) or user_id = auth.uid()));
 
+-- Chấm điểm tín dụng: theo agent, KHÔNG theo scope — hồ sơ tín dụng của khách là
+-- của chung, cắt theo người nhập thì mỗi người chấm một điểm trên cùng một khách.
 drop policy if exists "own credit_factors" on public.credit_factors;
 drop policy if exists "company credit_factors" on public.credit_factors;
 drop policy if exists "read credit_factors" on public.credit_factors;
-create policy "read credit_factors" on public.credit_factors for select using (public.is_member(company_id));
+create policy "read credit_factors" on public.credit_factors for select
+  using (public.is_member(company_id) and public.has_agent(company_id, 'credit'));
 drop policy if exists "insert credit_factors" on public.credit_factors;
-create policy "insert credit_factors" on public.credit_factors for insert with check (public.can_edit(company_id));
+create policy "insert credit_factors" on public.credit_factors for insert
+  with check (public.can_edit(company_id) and public.has_agent(company_id, 'credit'));
 drop policy if exists "update credit_factors" on public.credit_factors;
-create policy "update credit_factors" on public.credit_factors for update using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+create policy "update credit_factors" on public.credit_factors for update
+  using (public.can_edit(company_id) and public.has_agent(company_id, 'credit'))
+  with check (public.can_edit(company_id) and public.has_agent(company_id, 'credit'));
 drop policy if exists "delete credit_factors" on public.credit_factors;
-create policy "delete credit_factors" on public.credit_factors for delete using (public.can_edit(company_id));
+create policy "delete credit_factors" on public.credit_factors for delete
+  using (public.can_edit(company_id) and public.has_agent(company_id, 'credit'));
 
--- invoice_lines không có company_id → nối qua lô upload
+-- Dòng hoá đơn không có company_id riêng — đi vòng qua invoice_uploads, nên tự thừa
+-- hưởng cả điều kiện agent lẫn scope của bảng cha.
 drop policy if exists "own lines" on public.invoice_lines;
 drop policy if exists "company lines" on public.invoice_lines;
 drop policy if exists "read invoice_lines" on public.invoice_lines;
 create policy "read invoice_lines" on public.invoice_lines for select
-  using (exists (select 1 from public.invoice_uploads u
-                 where u.id = invoice_lines.upload_id and public.is_member(u.company_id)));
+  using (exists (select 1 from public.invoice_uploads u where u.id = invoice_lines.upload_id));
 drop policy if exists "write invoice_lines" on public.invoice_lines;
 create policy "write invoice_lines" on public.invoice_lines for all
   using (exists (select 1 from public.invoice_uploads u
@@ -425,11 +492,10 @@ create policy "write invoice_lines" on public.invoice_lines for all
   with check (exists (select 1 from public.invoice_uploads u
                       where u.id = invoice_lines.upload_id and public.can_edit(u.company_id)));
 
--- Nhật ký nhắc nợ: mọi thành viên đọc được; ghi do máy chủ (service role, bỏ qua RLS)
+-- Nhắc nợ: theo agent. Ghi do máy chủ (service role, bỏ qua RLS).
 drop policy if exists reminder_log_select on public.reminder_log;
 create policy reminder_log_select on public.reminder_log for select
-  using (public.is_member(company_id));
-
+  using (public.is_member(company_id) and public.has_agent(company_id, 'collect'));
 -- Nhật ký thao tác: chỉ Chủ sở hữu đọc. CỐ Ý không có policy insert/update/delete —
 -- chỉ hàm SECURITY DEFINER ghi được, nên không ai xoá được dấu vết của chính mình.
 drop policy if exists "owner reads audit_log" on public.audit_log;
@@ -458,8 +524,10 @@ begin
   -- do nothing, KHÔNG do update: người ĐÃ là thành viên mà nhận lời mời thì giữ
   -- nguyên vai. Ghi đè thì chủ sở hữu tự mời email mình rồi bấm Tham gia là tự hạ
   -- mình xuống editor — owner duy nhất làm vậy là công ty còn zero owner, kẹt hẳn.
-  insert into public.company_members (company_id, user_id, role, email)
-  values (inv.company_id, auth.uid(), inv.role, auth.jwt() ->> 'email')
+  -- agents = '{}' → đặc quyền tối thiểu: vào được công ty, chưa vào được agent nào,
+  -- owner mở dần. '{}' KHÁC null (null = toàn quyền) — cả điểm mấu chốt nằm ở đây.
+  insert into public.company_members (company_id, user_id, role, email, agents)
+  values (inv.company_id, auth.uid(), inv.role, auth.jwt() ->> 'email', '{}')
   on conflict (company_id, user_id) do nothing;
 
   update public.company_invites set accepted_at = now() where id = inv_id;
