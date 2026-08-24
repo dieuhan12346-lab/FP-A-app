@@ -17,9 +17,7 @@ export const SCOPES = ["all", "own"];
 /** Đặt phạm vi dữ liệu cho một thành viên. */
 export async function setMemberScope(companyId, userId, scope) {
   if (!SCOPES.includes(scope)) throw new Error("Phạm vi không hợp lệ");
-  const { error } = await db().from("company_members")
-    .update({ data_scope: scope }).eq("company_id", companyId).eq("user_id", userId);
-  if (error) throw error;
+  await updateMember(companyId, userId, { data_scope: scope });
 }
 
 /** Vai + danh sách agent của chính mình. agents = null nghĩa là toàn quyền. */
@@ -41,12 +39,23 @@ export async function myAccess(companyId) {
   return { role: data?.role || null, agents: data?.agents ?? null };
 }
 
+/* Supabase .update() bị RLS lọc hết thì trả 0 dòng và KHÔNG báo lỗi — code tưởng
+   thành công, giao diện tưởng đã lưu, người dùng ngồi chờ một thay đổi không tồn tại.
+   Mọi cập nhật thành viên đi qua đây để bắt đúng trường hợp đó. */
+async function updateMember(companyId, userId, patch) {
+  const { data, error } = await db().from("company_members")
+    .update(patch).eq("company_id", companyId).eq("user_id", userId)
+    .select("user_id");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Không lưu được — cơ sở dữ liệu từ chối. Kiểm lại bạn có đang là Chủ sở hữu của đúng công ty này không.");
+  }
+}
+
 /** Đặt danh sách agent cho một thành viên. null = toàn quyền. */
 export async function setMemberAgents(companyId, userId, agents) {
   const list = agents === null ? null : AGENTS.filter((a) => agents.includes(a));
-  const { error } = await db().from("company_members")
-    .update({ agents: list }).eq("company_id", companyId).eq("user_id", userId);
-  if (error) throw error;
+  await updateMember(companyId, userId, { agents: list });
 }
 
 function db() {
@@ -138,9 +147,7 @@ export async function cancelInvite(inviteId) {
 /** Đổi vai của một thành viên (chỉ owner). */
 export async function changeRole(companyId, userId, role) {
   if (!ROLES.includes(role)) throw new Error("Vai trò không hợp lệ");
-  const { error } = await db().from("company_members")
-    .update({ role }).eq("company_id", companyId).eq("user_id", userId);
-  if (error) throw error;
+  await updateMember(companyId, userId, { role });
 }
 
 /** Gỡ thành viên khỏi công ty, đồng thời xoá lời mời cũ để họ không tự vào lại. */
