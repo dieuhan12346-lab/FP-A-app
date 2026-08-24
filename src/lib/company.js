@@ -16,6 +16,9 @@ function normalizeCompany(row) {
     timezone: row.timezone,
     createdBy: row.created_by,
     createdAt: row.created_at,
+    // Vòng đời dùng thử. CSDL chưa chạy 021 → coi như đã mua, đừng khoá nhầm ai.
+    plan: row.plan || "paid",
+    trialEndsAt: row.trial_ends_at || null,
   };
 }
 

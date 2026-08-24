@@ -4,7 +4,7 @@ import { myAccess } from "./lib/members";
 import { supabase } from "./lib/supabase";
 import { applyCompanyUiLanguage } from "./i18n";
 
-export const CompanyContext = createContext({ company: null, role: null, agents: null, canEdit: true, isOwner: true, canUse: () => true, loading: true, refresh: async () => {} });
+export const CompanyContext = createContext({ company: null, role: null, agents: null, canEdit: true, isOwner: true, canUse: () => true, expired: false, trialDaysLeft: null, loading: true, refresh: async () => {} });
 
 export function useCompany() {
   return useContext(CompanyContext);
@@ -48,12 +48,21 @@ export function CompanyProvider({ children }) {
   /* Chốt chặn quyền thật nằm ở RLS trong cơ sở dữ liệu. Hai cờ dưới chỉ để giao diện
      khỏi mời người ta bấm một nút chắc chắn báo lỗi — nên khi chưa biết vai (bản dựng
      demo, hoặc CSDL chưa có cột role) thì mở, không khoá nhầm người đang dùng bình thường. */
-  const canEdit = role !== "viewer";
+  /* Dùng thử hết hạn → khoá ghi, giữ nguyên quyền đọc và xuất dữ liệu.
+     Chốt chặn thật nằm ở can_edit() dưới RLS; ở đây chỉ để giao diện khỏi mời người
+     ta bấm một nút chắc chắn bị từ chối. */
+  const trialEnd = company?.trialEndsAt ? new Date(company.trialEndsAt) : null;
+  const expired = company?.plan === "trial" && trialEnd != null && trialEnd <= new Date();
+  const trialDaysLeft = company?.plan === "trial" && trialEnd
+    ? Math.ceil((trialEnd - new Date()) / 864e5)
+    : null;
+
+  const canEdit = role !== "viewer" && !expired;
   const isOwner = role !== "viewer" && role !== "editor";
 
   /* Được vào agent nào. Owner luôn vào hết; agents null (chưa phân, hoặc CSDL chưa
      có cột) cũng mở hết — cùng quy ước fail-open, chốt chặn thật là has_agent() ở RLS. */
   const canUse = (id) => isOwner || agents == null || agents.includes(id);
 
-  return <CompanyContext.Provider value={{ company, role, agents, canEdit, isOwner, canUse, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
+  return <CompanyContext.Provider value={{ company, role, agents, canEdit, isOwner, canUse, expired, trialDaysLeft, loading, refresh, fxTick }}>{children}</CompanyContext.Provider>;
 }

@@ -47,7 +47,11 @@ create table if not exists public.companies (
   email_domain        text,
   email_domain_id     text,
   email_domain_status text default 'none',
-  email_from_name     text
+  email_from_name     text,
+  -- Vòng đời dùng thử: trial 14 ngày → hết hạn khoá GHI (can_edit) nhưng vẫn đọc và
+  -- xuất được → 30 ngày sau vào purge_queue() chờ người vận hành duyệt xoá.
+  plan                text not null default 'trial' check (plan in ('trial','paid')),
+  trial_ends_at       timestamptz not null default (now() + interval '14 days')
 );
 
 -- Thành viên công ty. VAI TRÒ quyết định quyền:
@@ -271,12 +275,21 @@ returns boolean language sql stable security definer set search_path = public as
                  where m.company_id = cid and m.user_id = auth.uid());
 $$;
 
--- Quyền GHI: chỉ owner và editor. viewer chỉ đọc.
+-- Quyền GHI: owner + editor, VÀ công ty chưa hết hạn dùng thử.
+-- Khoá hết hạn đặt ở đây vì hàm này là cửa của MỌI thao tác ghi trong RLS — chặn
+-- được cả đường gọi API trực tiếp, không chỉ ẩn nút. Đọc và xuất KHÔNG bị chặn:
+-- is_member() và is_owner() giữ nguyên, khách hết hạn vẫn lấy sổ sách của mình về.
 create or replace function public.can_edit(cid uuid)
 returns boolean language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.company_members m
-                 where m.company_id = cid and m.user_id = auth.uid()
-                   and m.role in ('owner','editor'));
+  select exists (
+    select 1
+      from public.company_members m
+      join public.companies c on c.id = m.company_id
+     where m.company_id = cid
+       and m.user_id = auth.uid()
+       and m.role in ('owner','editor')
+       and (c.plan <> 'trial' or c.trial_ends_at > now())
+  );
 $$;
 
 -- Quyền QUẢN TRỊ: chỉ owner (mời/xoá thành viên, đổi hồ sơ công ty).
@@ -606,6 +619,35 @@ $$;
 
 revoke all on function public.my_invites() from public;
 grant execute on function public.my_invites() to authenticated;
+
+-- ────────────── DANH SÁCH CHỜ XOÁ ──────────────
+-- Công ty dùng thử đã hết hạn quá 30 ngày. Chỉ LIỆT KÊ, không xoá.
+-- Cố ý không để pg_cron xoá thẳng: một lỗi logic là xoá nhầm hàng loạt sổ sách của
+-- khách, không ai kịp chặn. Người vận hành xem danh sách này rồi tự chạy script xoá.
+create or replace function public.purge_queue()
+returns table (
+  company_id   uuid,
+  ten_cong_ty  text,
+  het_han_ngay date,
+  qua_han_ngay integer,
+  so_ban_ghi   bigint
+)
+language sql stable security definer set search_path = public as $$
+  select c.id,
+         c.name,
+         c.trial_ends_at::date,
+         (current_date - c.trial_ends_at::date)::int,
+         (select count(*) from public.receivables  r where r.company_id = c.id)
+       + (select count(*) from public.payables     p where p.company_id = c.id)
+       + (select count(*) from public.transactions t where t.company_id = c.id)
+    from public.companies c
+   where c.plan = 'trial'
+     and c.trial_ends_at < now() - interval '30 days'
+   order by c.trial_ends_at;
+$$;
+
+-- Chỉ người vận hành chạy bằng service role trong SQL Editor, không mở cho người dùng.
+revoke all on function public.purge_queue() from public;
 
 -- ────────────── XUẤT TOÀN BỘ DỮ LIỆU ──────────────
 -- Làm dưới cơ sở dữ liệu chứ không ở trình duyệt: ẩn nút chỉ là che giao diện, ai

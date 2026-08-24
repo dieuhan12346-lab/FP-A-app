@@ -4192,7 +4192,7 @@ export default function App() {
 
 function AppShell() {
   const { t } = useT();
-  const { role, canUse, isOwner } = useCompany();
+  const { role, canUse, isOwner, expired, trialDaysLeft } = useCompany();
   const [page, setPage] = useState("cashflow");
   // Agent bị khoá thì bỏ khỏi thanh bên; trang của owner thì theo vai, không theo agent.
   const nav = useMemo(
@@ -4317,6 +4317,16 @@ function AppShell() {
             <div style={{ fontSize: 11.5, color: C.sub }}>{t("nav." + active.key + ".desc")}</div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Đếm ngược dùng thử. Chỉ hiện khi đang thử — bản đã mua thì không có gì. */}
+            {expired ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, color: C.red, background: "rgba(242,109,109,.14)", border: `1px solid ${C.red}55`, padding: "6px 12px", borderRadius: 20 }}>
+                <Clock size={13} />{t("trial.over")}
+              </span>
+            ) : trialDaysLeft != null && (
+              <span title={t("trial.tip")} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, color: trialDaysLeft <= 3 ? C.orange : C.sub, background: trialDaysLeft <= 3 ? C.orangeSoft : "rgba(255,255,255,.05)", border: `1px solid ${trialDaysLeft <= 3 ? C.orange + "55" : C.line}`, padding: "6px 12px", borderRadius: 20 }}>
+                <Clock size={13} />{t("trial.left", { n: Math.max(0, trialDaysLeft) })}
+              </span>
+            )}
             {role === "viewer" && <RoBadge />}
             <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "6px 12px", borderRadius: 20 }}>
               <span style={{ width: 7, height: 7, borderRadius: 9, background: C.green }} />{t("app.status")}
