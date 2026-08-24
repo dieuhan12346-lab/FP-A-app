@@ -53,10 +53,10 @@ Kiểm ngay sau khi chạy — cả 3 truy vấn phải ra đúng:
 ```sql
 select count(*) as so_bang from information_schema.tables
  where table_schema = 'public';
--- mong đợi: 13
+-- mong đợi: 14
 
 select count(*) as so_policy from pg_policies where schemaname = 'public';
--- mong đợi: 38
+-- mong đợi: 42
 
 select count(*) as chua_bat_rls from pg_tables t
  where t.schemaname = 'public'

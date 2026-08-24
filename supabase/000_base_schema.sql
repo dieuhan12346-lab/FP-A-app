@@ -125,6 +125,22 @@ create table if not exists public.cashflow_settings (
   updated_at   timestamptz not null default now()
 );
 
+-- Số dư đầu kỳ theo MỐC NGÀY. Thay cashflow_settings ở trên (bảng đó mỗi công ty chỉ
+-- giữ được một số dư, lưu lần sau đè mất lần trước). Giữ cả hai: app đọc bảng này,
+-- bảng kia còn để quay lui.
+create table if not exists public.cashflow_opening (
+  id           uuid primary key default gen_random_uuid(),
+  company_id   uuid not null references public.companies(id) on delete cascade,
+  user_id      uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  as_of        date not null,
+  opening_cash numeric not null default 0,
+  note         text,
+  created_at   timestamptz not null default now(),
+  -- Một ngày một số dư. Nhập lại cùng ngày là SỬA mốc đó, không đẻ dòng trùng.
+  unique (company_id, as_of)
+);
+create index if not exists cashflow_opening_company on public.cashflow_opening (company_id, as_of desc);
+
 -- Giao dịch tiền (nhập từ sổ quỹ / sao kê ERP)
 create table if not exists public.transactions (
   id          uuid primary key default gen_random_uuid(),
@@ -293,6 +309,7 @@ alter table public.company_invites   enable row level security;
 alter table public.receivables       enable row level security;
 alter table public.payables          enable row level security;
 alter table public.cashflow_settings enable row level security;
+alter table public.cashflow_opening  enable row level security;
 alter table public.transactions      enable row level security;
 alter table public.invoice_uploads   enable row level security;
 alter table public.invoice_lines     enable row level security;
@@ -421,6 +438,20 @@ create policy "update cashflow_settings" on public.cashflow_settings for update
   using (public.can_edit(company_id)) with check (public.can_edit(company_id));
 drop policy if exists "delete cashflow_settings" on public.cashflow_settings;
 create policy "delete cashflow_settings" on public.cashflow_settings for delete
+  using (public.can_edit(company_id));
+
+-- Mốc số dư đầu kỳ: cũng là con số của cả công ty → không theo scope.
+drop policy if exists "read cashflow_opening" on public.cashflow_opening;
+create policy "read cashflow_opening" on public.cashflow_opening for select
+  using (public.is_member(company_id));
+drop policy if exists "insert cashflow_opening" on public.cashflow_opening;
+create policy "insert cashflow_opening" on public.cashflow_opening for insert
+  with check (public.can_edit(company_id));
+drop policy if exists "update cashflow_opening" on public.cashflow_opening;
+create policy "update cashflow_opening" on public.cashflow_opening for update
+  using (public.can_edit(company_id)) with check (public.can_edit(company_id));
+drop policy if exists "delete cashflow_opening" on public.cashflow_opening;
+create policy "delete cashflow_opening" on public.cashflow_opening for delete
   using (public.can_edit(company_id));
 
 drop policy if exists "own transactions" on public.transactions;
