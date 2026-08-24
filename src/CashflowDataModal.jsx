@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X, Plus, Wallet, TrendingUp, TrendingDown, Check, RotateCcw, FileSpreadsheet } from "lucide-react";
-import { addReceivable, addPayable, setReceivableStatus, setPayableStatus, deleteReceivable, deletePayable, saveOpeningCash } from "./lib/cashflow";
+import { addReceivable, addPayable, setReceivableStatus, setPayableStatus, deleteReceivable, deletePayable, saveOpeningCash, listOpeningHistory, deleteOpening } from "./lib/cashflow";
 import LedgerImportSection from "./LedgerImportSection";
 import { fmtMoney, moneySymbol } from "./lib/money";
 import { booksCurrencyFor, chartFor } from "./lib/regionDefaults";
@@ -23,6 +23,14 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
   const [err, setErr] = useState("");
   const [opening, setOpening] = useState(data?.openingCash ?? 0);
   const [savingOpen, setSavingOpen] = useState(false);
+  const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  const [openAsOf, setOpenAsOf] = useState(todayIso);
+  const [openHist, setOpenHist] = useState([]);
+  const [showHist, setShowHist] = useState(false);
+  const reloadHist = useCallback(() => {
+    if (companyId) listOpeningHistory(companyId).then(setOpenHist).catch(() => setOpenHist([]));
+  }, [companyId]);
+  useEffect(() => { reloadHist(); }, [reloadHist, data?.openingCash]);
   const [rForm, setRForm] = useState({ customer: "", amount: "", dueDate: "", email: "", phone: "" });
   const [pForm, setPForm] = useState({ label: "", amount: "", dueDate: "", category: "supplier" });
   const CATS = ["supplier", "payroll", "tax", "other"];
@@ -39,8 +47,8 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
   const [openSaved, setOpenSaved] = useState(false);
   const saveOpening = () => {
     setErr(""); setOpenSaved(false); setSavingOpen(true);
-    saveOpeningCash(companyId, Number(opening) || 0)
-      .then(() => { setOpenSaved(true); onChanged(); setTimeout(() => setOpenSaved(false), 2500); })
+    saveOpeningCash(companyId, Number(opening) || 0, openAsOf)
+      .then(() => { setOpenSaved(true); onChanged(); reloadHist(); setTimeout(() => setOpenSaved(false), 2500); })
       .catch((ex) => setErr(ex.message))
       .finally(() => setSavingOpen(false));
   };
@@ -125,12 +133,42 @@ export default function CashflowDataModal({ company, companyId, data, onChanged,
           {canEdit ? (<>
             <input className="tnum" type="number" min="0" step="1000000" value={opening} onChange={(e) => setOpening(e.target.value)} style={{ ...inp, width: 180, textAlign: "right" }} />
             <span style={{ fontSize: 11, color: C.sub }}>{moneySymbol(currency)}</span>
+            {/* Mốc ngày: mỗi ngày một số dư, nhập lại cùng ngày là sửa mốc đó. */}
+            <span style={{ fontSize: 11, color: C.sub }}>{t("cf.data.asOf")}</span>
+            <input className="tnum" type="date" value={openAsOf} onChange={(e) => setOpenAsOf(e.target.value)} style={{ ...inp, width: 150 }} />
             <button onClick={saveOpening} disabled={savingOpen} style={{ padding: "8px 16px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 12, color: "#06251a", background: C.green, opacity: savingOpen ? 0.6 : 1, fontFamily: "inherit" }}>{savingOpen ? "…" : t("cf.data.save")}</button>
             {openSaved && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: C.green }}><Check size={13} />{t("cf.data.saved")}</span>}
           </>) : (
             <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>{fmtAmt(data?.openingCash ?? 0)}</span>
           )}
+          {openHist.length > 0 && (
+            <button onClick={() => setShowHist((v) => !v)} style={{ padding: "6px 11px", borderRadius: 8, cursor: "pointer", fontSize: 11.5, fontWeight: 700, color: showHist ? C.cyan : C.sub, background: "transparent", border: `1px solid ${showHist ? C.cyan + "66" : C.line}`, fontFamily: "inherit" }}>
+              {t("cf.data.hist", { n: openHist.length })}
+            </button>
+          )}
         </div>
+
+        {showHist && openHist.length > 0 && (
+          <div style={{ marginTop: -8, marginBottom: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+            {openHist.map((h) => {
+              const inUse = h.as_of === data?.openingAsOf;
+              return (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 11px", borderRadius: 8, background: inUse ? C.gold + "14" : C.panel2, border: `1px solid ${inUse ? C.gold + "44" : C.line}` }}>
+                  <span className="tnum" style={{ fontSize: 11.5, color: C.sub, width: 92 }}>{h.as_of}</span>
+                  <span className="tnum" style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>{fmtAmt(h.opening_cash)}</span>
+                  {inUse && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.gold, background: C.gold + "1c", padding: "2px 7px", borderRadius: 5 }}>{t("cf.data.inUse")}</span>}
+                  {h.note && <span style={{ fontSize: 10.5, color: C.sub }}>{h.note}</span>}
+                  {canEdit && (
+                    <button onClick={() => run(() => deleteOpening(h.id).then(reloadHist))} title={t("cf.data.del")}
+                      style={{ display: "grid", placeItems: "center", width: 24, height: 24, borderRadius: 6, border: "none", cursor: "pointer", color: C.red, background: "transparent" }}>
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Phải thu */}
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>

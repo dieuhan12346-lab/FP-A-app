@@ -25,11 +25,10 @@ export async function fetchCashflowData(companyId) {
   const [r1, r2, r3] = await Promise.all([
     supabase.from("receivables").select("*").eq("company_id", companyId).order("due_date"),
     supabase.from("payables").select("*").eq("company_id", companyId).order("due_date"),
-    supabase.from("cashflow_settings").select("opening_cash").eq("company_id", companyId).maybeSingle(),
+    fetchOpening(companyId),
   ]);
   if (r1.error) throw r1.error;
   if (r2.error) throw r2.error;
-  if (r3.error) throw r3.error;
   // dòng hóa đơn: lỗi ở đây không được làm sập phần còn lại
   let invoiceLines = [];
   try {
@@ -41,11 +40,44 @@ export async function fetchCashflowData(companyId) {
   } catch { /* bỏ qua */ }
   const receivables = (r1.data || []).map(mapRecv);
   const payables = (r2.data || []).map(mapPay);
-  const openingCash = Number(r3.data?.opening_cash) || 0;
+  const openingCash = Number(r3?.opening_cash) || 0;
   return {
     receivables, payables, openingCash, invoiceLines,
-    hasReal: receivables.length > 0 || payables.length > 0 || invoiceLines.length > 0 || !!r3.data,
+    openingAsOf: r3?.as_of || null,
+    hasReal: receivables.length > 0 || payables.length > 0 || invoiceLines.length > 0 || !!r3,
   };
+}
+
+/** Số dư đang dùng = mốc gần nhất KHÔNG vượt quá hôm nay. Nhập trước cho kỳ sau thì
+ *  mốc đó chưa được dùng cho tới đúng ngày, nếu không dự báo hôm nay chạy bằng số
+ *  của tương lai. Lùi về bảng cũ nếu cơ sở dữ liệu chưa chạy migration 019. */
+async function fetchOpening(companyId) {
+  const today = new Date();
+  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const { data, error } = await supabase
+    .from("cashflow_opening").select("opening_cash, as_of")
+    .eq("company_id", companyId).lte("as_of", iso)
+    .order("as_of", { ascending: false }).limit(1).maybeSingle();
+  if (!error) return data || null;
+  const fb = await supabase
+    .from("cashflow_settings").select("opening_cash")
+    .eq("company_id", companyId).maybeSingle();
+  return fb.data || null;
+}
+
+/** Toàn bộ mốc số dư đã nhập, mới nhất trước. */
+export async function listOpeningHistory(companyId) {
+  if (!supabase || !companyId) return [];
+  const { data, error } = await supabase
+    .from("cashflow_opening").select("id, as_of, opening_cash, note")
+    .eq("company_id", companyId).order("as_of", { ascending: false });
+  if (error) return [];   // CSDL chưa chạy 019 → coi như chưa có lịch sử
+  return data || [];
+}
+
+export async function deleteOpening(id) {
+  const { error } = await db().from("cashflow_opening").delete().eq("id", id);
+  if (error) throw error;
 }
 
 export async function addReceivable(companyId, { customer, amount, dueDate, customerEmail, customerPhone }) {
@@ -80,13 +112,13 @@ export async function deletePayable(id) {
   if (error) throw error;
 }
 
-export async function saveOpeningCash(companyId, openingCash) {
+/** Ghi một MỐC số dư đầu kỳ. Cùng ngày thì sửa mốc đó, ngày khác thì thêm mốc mới —
+ *  lịch sử giữ lại, không đè mất như bảng cashflow_settings cũ. */
+export async function saveOpeningCash(companyId, openingCash, asOf) {
   if (!companyId) throw new Error("Chưa xác định được hồ sơ công ty — tải lại trang rồi thử lại");
-  const { error } = await db().from("cashflow_settings")
-    .upsert(
-      { company_id: companyId, opening_cash: openingCash, updated_at: new Date().toISOString() },
-      { onConflict: "company_id" }
-    );
+  if (!asOf) throw new Error("Chưa chọn ngày cho số dư này");
+  const { error } = await db().from("cashflow_opening")
+    .upsert({ company_id: companyId, as_of: asOf, opening_cash: openingCash }, { onConflict: "company_id,as_of" });
   if (error) throw error;
 }
 
